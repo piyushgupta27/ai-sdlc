@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Environment + secrets
+.env
+.env.local
+.env.*.local
+*.secret
+*.pem
+*.key
+
+# Runtime data
+.sdlc-sandboxes/
+.sdlc-queue/
+.audit/raw/
+.cache/
+tmp/
+
+# Editor + OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Test output
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Local state
+.last-pull
+.feature-prompted-*
