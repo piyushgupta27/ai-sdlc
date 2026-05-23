@@ -1,0 +1,56 @@
+{
+  "name": "ai-sdlc",
+  "version": "0.0.1",
+  "description": "Autonomous SDLC platform — multi-agent pipeline that builds, tests, reviews, and ships code with human-in-the-loop gates calibrated to blast radius.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "author": "Piyush Gupta <piyushguptaece@gmail.com>",
+  "homepage": "https://github.com/piyushgupta27/ai-sdlc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piyushgupta27/ai-sdlc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/piyushgupta27/ai-sdlc/issues"
+  },
+  "keywords": [
+    "autonomous-sdlc",
+    "ai-agents",
+    "code-review",
+    "multi-tenant",
+    "reviewer-fleet",
+    "blast-radius",
+    "trust-expansion"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "bin": {
+    "sdlc": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "sdlc": "tsx tools/sdlc/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "ci": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "prepublishOnly": "pnpm run ci && pnpm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
