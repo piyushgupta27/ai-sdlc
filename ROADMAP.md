@@ -38,6 +38,40 @@ Each onboarding follows the procedure in [ONBOARDING.md](./ONBOARDING.md). The f
 
 ---
 
+## Orchestration substrate: GitHub Projects board
+
+**Primary surface** (per Q-AI-21, R-AISDLC-100): the GitHub Project board for each onboarded repo. Columns mirror the pipeline state machine:
+
+```
+Ready → Building → QA → Review → Done
+              ↑                         ↓
+              ↑                  (auto-merge → develop)
+              ↑
+        Blocked / Skipped (manual gates)
+```
+
+Why this substrate:
+- **Public** for public repos = recruiter-visible kanban progress (portfolio signal)
+- **Native to GitHub** = no separate UI to maintain; uses what's already there
+- **State machine IS visible** = anyone can see what's in flight
+- **Onboarding flow** (`pnpm sdlc onboard`) creates the project board with the canonical columns
+
+Local dashboard at `:3001` supplements (audit log query, cohort analytics, cost dashboard) but doesn't gatekeep — the GitHub Project is the source of truth for "what's where."
+
+## The "add a column when blocked" meta-pattern (R-AISDLC-106)
+
+How the pipeline grows over time. When 3+ tickets cluster in the Block column with the same root cause within a 14-day window, that's the signal to add a new stage + specialized agent:
+
+| Repeated block reason | Suggested response | Adds which agent/stage |
+|---|---|---|
+| Lighthouse mobile <90 | Add PERF stage + PERF-REVIEWER (4.4e) | v1.5 reviewer fleet, brought forward if needed |
+| Untranslated string in changed files | Add I18N stage + I18N-REVIEWER (4.4f) | Same |
+| Visual diff >5% on UI changes | Add VISUAL-DIFF gate before COMMIT | New gate G2.5 |
+| Lint config keeps blocking BUILDER | Add LINT-AUTOFIX pre-stage | New agent: LINT-FIXER |
+| Test coverage drops below threshold | Add coverage-recovery stage | Per project, optional |
+
+Each addition follows: 3+ Block instances → ADR via G1.5 → user approves → new stage code lands → ROADMAP updated.
+
 ## Public artifacts strategy
 
 What gets shaped into interview-facing public artifacts as a byproduct of ai-sdlc operating:
