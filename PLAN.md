@@ -52,46 +52,72 @@ These are the hard gates for declaring v1 complete.
 
 **Pass criteria for Phase 0:** ai-sdlc repo is public + has the planning suite + has hygiene files. GitHub profile signals the work.
 
-### Phase A — Foundation (~2 weeks, weeks 1-3)
+### Phase A — Foundation (~6 days for slim v1, +~2 weeks for v1.5+ enrichment)
 
-**Goal:** Orchestrator + 4 agents + multi-tenant infra + HITL queue + dashboard, all running end-to-end against ai-sdlc itself as the first testbed.
+**Goal (v1):** Orchestrator + 4 agents (PLANNER, BUILDER, TESTER, REVIEWER, REPORTER) + GitHub Projects substrate + 1 HITL gate + simple audit + Red zone for secrets, running end-to-end against ai-sdlc itself.
+
+**Goal (v1.5+ enrichment):** Specialized reviewer fleet, 5 HITL gates, hash-chained audit, trust state machine, full tier system, Repo Readiness Score, Layer 3 CI enforcement — all graduate per data per [ROADMAP.md](./ROADMAP.md) v1.5+ table.
+
+> **Each row below is tagged `[v1]` or `[v1.5+]`.** v1 is the ship-it MVP. v1.5+ rows are pre-planned and stay deliverables, just sequenced later.
 
 | Deliverable | Path | Success criteria | HITL load |
 |---|---|---|---|
-| Orchestrator skeleton | `tools/sdlc/orchestrator/` | Reads PLAN.md from any target repo; selects next task; spawns one agent; writes one audit row | High (design reviews) |
-| Audit log writer (JSONL + hash chain) | `tools/sdlc/orchestrator/audit-log.ts` | Append-only; tampering detected; replay command works | — |
-| Project namespace | `tools/sdlc/projects/` | Per-project config + state + prompts | — |
-| PLANNER agent | `tools/sdlc/agents/planner/` | Given a one-line epic spec from a GitHub issue, produces structured tasks JSON | High |
-| BUILDER agent | `tools/sdlc/agents/builder/` | Given a task, produces a passing commit on a feature branch in a worktree | High |
-| SECURITY-REVIEWER | `tools/sdlc/agents/reviewer-fleet/security/` | Catches 5 seeded vulns in regression suite | High |
-| CODE-QUALITY-REVIEWER | `tools/sdlc/agents/reviewer-fleet/code-quality/` | Catches 5 seeded anti-patterns in regression suite | High |
-| AGGREGATOR + AI filter | `tools/sdlc/agents/aggregator/` | Drops ≥40% of seeded false positives; never drops a real critical | Medium |
-| Three-layer enforcement (Layer 1+2) | `CLAUDE.md` Red zone format + `tools/check-blast-radius.sh` | Red zone write blocked; unblocked with valid HITL approval token | Medium |
-| Three-layer enforcement (Layer 3) | `.github/workflows/blast-radius.yml` per onboarded repo | PR touching Red zone files requires `hitl-approved-tier-{0,1}` label | Medium |
-| Model router | `tools/sdlc/router/select-model.ts` | Routes per §12.2 table; logs decision; logs cost per call | — |
-| HITL queue | `.sdlc-queue/pending-hitl/` directory structure | Gate records (G1, G1.5, G2, G3, G5) written + read by dashboard | — |
-| Dashboard | `tools/sdlc/dashboard/` Next.js app on :3001 | Shows HITL queue + active tasks + 7d defect rate (zero data ok) | — |
-| GitHub Projects integration (Q-AI-21, R-AISDLC-100) | `tools/sdlc/orchestrator/github-projects.ts` | Reads/writes column state via gh CLI; onboarding creates project board with canonical columns | — |
-| `pnpm sdlc lint` verb (Q-AI-22, R-AISDLC-101) | `tools/sdlc/cli/commands/lint.ts` | Surfaces vague tickets in Ready + proposed AC fixes; user approves before dispatch | — |
-| PR iteration-history populator (Q-AI-23, R-AISDLC-102) | `tools/sdlc/agents/commit/pr-body.ts` | Auto-populates "Loop history" in PR body each cycle | — |
-| Tier-aware retry policy (Q-AI-26, R-AISDLC-105) | `tools/sdlc/orchestrator/retry-policy.ts` | Per-tier budget; exhaustion → Block + G2 | — |
-| `develop`-branch merge target (Q-AI-24, R-AISDLC-103) | onboarding flow + per-project config | Creates develop if absent; main requires manual PR from develop | — |
-| Mobile dispatch via ntfy.sh (Q-AI-25, R-AISDLC-104) | `tools/sdlc/cli/commands/dispatch.ts` + webhook config | `pnpm sdlc dispatch --webhook <topic>` fires orchestrator headless | — |
-| Slash command shortcuts (R-AISDLC-107) | `.claude/commands/sdlc-*.md` | Thin wrappers over CLI for interactive sessions | — |
-| First end-to-end pipeline run (ai-sdlc as testbed) | Audit log entry for first toy task | One Tier 3 toy task (e.g. add a typo fix to README) merged via pipeline | Critical — G1 + G1.5 + G2 + G3 + G5 all exercised |
-| Three-layer enforcement adversarial test | Audit log + RCA file | Manual attempt to write to `private/` blocked at all 3 layers | Critical |
+| Orchestrator skeleton | `tools/sdlc/orchestrator/` | Reads PLAN.md from any target repo; selects next task; spawns one agent; writes one audit row | **[v1]** High |
+| Audit log writer (plain JSONL append) | `tools/sdlc/orchestrator/audit-log.ts` | Append-only; one file per day per project | **[v1]** — |
+| Hash chain on audit log | (extends above) | Tampering detected; replay command works deterministically | **[v1.5+]** — |
+| Project namespace | `tools/sdlc/projects/` | Per-project config + state + prompts | **[v1]** — |
+| PLANNER agent | `tools/sdlc/agents/planner/` | Given a one-line epic spec from a GitHub issue, produces structured tasks JSON | **[v1]** High |
+| BUILDER agent | `tools/sdlc/agents/builder/` | Given a task, produces a passing commit on a feature branch in a worktree | **[v1]** High |
+| TESTER agent | `tools/sdlc/agents/tester/` | Given built diff, writes / extends tests; coverage ≥70% on changed files | **[v1]** Medium |
+| REVIEWER (single, generalist) | `tools/sdlc/agents/reviewer/` | Reviews diff for security + code quality together; verdict PASS/CHANGES_REQUESTED/FAIL | **[v1]** Medium |
+| REPORTER agent | `tools/sdlc/agents/reporter/` | Summarizes merged change; <200 words | **[v1]** — |
+| Specialized reviewer fleet (SECURITY + CODE-QUALITY + BUG + DESIGN + PERF + I18N split) | `tools/sdlc/agents/reviewer-fleet/*` | Graduates from single REVIEWER when data justifies (3+ misses of same dimension) | **[v1.5+]** — |
+| AGGREGATOR + AI filter | `tools/sdlc/agents/aggregator/` | Drops ≥40% false positives; needed only with reviewer fleet | **[v1.5+]** — |
+| CLAUDE.md Red zone (Layer 1) — secrets + cookies only | per-project `CLAUDE.md` | 2-3 paths max (e.g. `private/`, `*.env`); not full tier system | **[v1]** Medium |
+| Pre-commit hook (Layer 2) — `tools/check-blast-radius.sh` | already shipped in commit e7a7b74 | Blocks Red zone writes without approval token | **[v1]** ✅ done |
+| CI workflow (Layer 3) — `.github/workflows/blast-radius.yml` | per onboarded repo | Re-checks at PR level + requires HITL label | **[v1.5+]** — |
+| Full tier system (Tier 0-4) | `tools/sdlc/types/task.ts` already has it; gates not yet wired | Replace v1's binary HITL/no-HITL with calibrated tiering | **[v1.5+]** — |
+| Model router | `tools/sdlc/router/select-model.ts` | Sonnet default; Opus for REVIEWER + DEBUGGER; Haiku for REPORTER | **[v1]** — |
+| HITL queue (filesystem, JSON) | `.sdlc-queue/pending-hitl/` | Gate records written + read by dashboard + Block column | **[v1]** — |
+| G2 REVIEW gate (only v1 gate) | wired through HITL queue | Block column on GH Project board IS the surface | **[v1]** — |
+| G1 / G1.5 / G3 / G5 gates | per HITL.md | Graduate per ROADMAP.md v1.5+ table triggers | **[v1.5+]** — |
+| Dashboard | `tools/sdlc/dashboard/` Next.js app on :3001 | Shows HITL queue + active tasks + 7d defect rate; GH Project board is primary surface | **[v1]** — |
+| GitHub Projects integration (Q-AI-21, R-AISDLC-100) | `tools/sdlc/orchestrator/github-projects.ts` | Reads/writes column state via gh CLI; onboarding creates project board with canonical columns | **[v1]** — |
+| `pnpm sdlc lint` verb (Q-AI-22, R-AISDLC-101) | `tools/sdlc/cli/commands/lint.ts` | Surfaces vague tickets in Ready + proposed AC fixes; user approves before dispatch | **[v1]** — |
+| `pnpm sdlc dispatch` verb (Q-AI-25, R-AISDLC-104) | `tools/sdlc/cli/commands/dispatch.ts` | CLI + ntfy.sh webhook entry points | **[v1]** — |
+| `pnpm sdlc board` + `status` verbs | `tools/sdlc/cli/commands/*` | GH Project sync display + project state | **[v1]** — |
+| `pnpm sdlc onboard` verb | `tools/sdlc/cli/commands/onboard.ts` | Sets up GH Project board + symlink + CLAUDE.md + Red zone | **[v1]** Medium |
+| PR iteration-history populator (Q-AI-23, R-AISDLC-102) | `tools/sdlc/agents/commit/pr-body.ts` | Auto-populates "Loop history" in PR body each cycle | **[v1]** — |
+| `develop`-branch merge target (Q-AI-24, R-AISDLC-103) | onboarding flow + per-project config | Creates develop if absent; main requires manual PR from develop | **[v1]** — |
+| Global max-3 retries → Block | `tools/sdlc/orchestrator/retry-policy.ts` | Single global cap; Block column on cap exhaustion | **[v1]** — |
+| Tier-aware retry policy (Q-AI-26, R-AISDLC-105) | (extends above) | Per-tier budget refinement (0/1/3/5/∞) | **[v1.5+]** — |
+| Trust state machine (5 states, formal slice criteria) | `tools/sdlc/orchestrator/trust.ts` | MANUAL→SUPERVISED→TRUSTED-LOW→TRUSTED-MID→STEADY-STATE | **[v1.5+]** — |
+| Simple MANUAL ↔ AUTO toggle | `projects/<slug>/config.json` `autoMerge` field | v1's stand-in for the full state machine | **[v1]** — |
+| Repo Readiness Score (40/30/30 weighted) | `tools/sdlc/orchestrator/readiness.ts` | Daily computed score; gates auto-merge | **[v1.5+]** — |
+| Manual 70% coverage check | onboarding + per-PR | Coverage CI check; not a full readiness algorithm | **[v1]** — |
+| Slash command shortcuts (R-AISDLC-107) | `.claude/commands/sdlc-*.md` | Thin wrappers over CLI for interactive sessions | **[v1.5+]** — |
+| First end-to-end pipeline run (ai-sdlc as testbed) | Audit log entry for first toy task | One toy task (e.g. add a typo fix to README) merged via pipeline | **[v1]** Critical |
+| Layer 1+2 adversarial test | Audit log + RCA file | Manual attempt to write to `private/` blocked by hook | **[v1]** Critical |
 
-**Phase A pass criteria:**
-1. One Tier 3 task merged via the pipeline against ai-sdlc itself
-2. All 5 HITL gates exercised at least once
+**v1 pass criteria (slim Phase A complete):**
+1. One toy task merged via pipeline against ai-sdlc itself
+2. G2 gate exercised at least once (Block column → user review → resume)
 3. Audit log queryable end-to-end
-4. Three-layer enforcement adversarial test passes
+4. Layer 1+2 enforcement test passes (try to write to `private/` → blocked)
 5. Dashboard renders correctly with zero data and with data
-6. Cost per Tier 3 task < $0.50
-7. GitHub Project board reflects ticket's journey across columns (Ready → ... → Done)
+6. Cost per toy task < $0.50
+7. GitHub Project board reflects ticket's journey across columns
 8. `pnpm sdlc lint` flags a deliberately-vague test ticket with proposed AC fixes
 9. PR body contains auto-populated "Loop history" section
-10. Tier 0 retry cap (=0) tested: a deliberate Tier 0 build failure fires G2 immediately, no auto-retry
+10. ntfy.sh webhook dispatch works from a mobile device
+
+**v1.5+ enrichment criteria (graduates per ROADMAP.md table):**
+- All 5 HITL gates exercised
+- Specialized reviewer fleet active
+- Hash chain verified end-to-end on audit log
+- Trust state machine reached SUPERVISED state
+- Layer 3 CI enforcement passes adversarial test
+- Repo Readiness Score ≥70% computed automatically
 
 ### Phase B — Testbed #1 (~1 week, week 4)
 
