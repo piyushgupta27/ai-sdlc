@@ -117,7 +117,7 @@ The whole point of ai-sdlc is to let agents do routine work AND let the human st
 **You respond:**
 - **Approve** → task proceeds to DEMO
 - **Approve with follow-up TODO** → task proceeds; an issue is filed for the deferred item
-- **Request changes** → task returns to BUILDER with your feedback (max 3 build/review cycles before escalation)
+- **Request changes** → task returns to BUILDER with your feedback (iteration cap per tier — see §6.3)
 - **Reject** → task discarded; reason logged
 
 **Fires for which tiers (per the tier matrix):**
@@ -278,6 +278,29 @@ Configured per project (defaults to the user's calendar):
 | **4** | auto-OK | skip | auto-OK | auto-OK | skip | 0 |
 
 Plus the SECURITY override: BLOCK verdict from SECURITY-REVIEWER fires G2 regardless of tier.
+
+### 6.3 Tier-aware iteration caps (Q-AI-26)
+
+Refines the previous global "max 3 build/review cycles." When BUILDER + REVIEWER FLEET cycle and REVIEW keeps returning CHANGES_REQUESTED, the orchestrator caps retries per-tier and routes excess to Block:
+
+| Tier | Retry budget | What happens on cap exhaustion |
+|---|---|---|
+| **0** | 0 retries | HITL fires on FIRST build failure — Tier 0 is too risky to loop on |
+| **1** | 1 retry | After 2 total attempts, Block column + G2 HITL with full audit trail |
+| **2** | 3 retries (current default) | After 4 total attempts, Block column + G2 HITL |
+| **3** | 5 retries | After 6 total attempts, Block column + G2 HITL |
+| **4** | Unlimited until manual stop | No auto-block; user can `pnpm sdlc stop --task <id>` to halt |
+
+**Rationale:**
+- Tier 0/1 wrong = real harm. Looping wastes time + may compound damage. Cheaper to surface immediately to user.
+- Tier 4 right answer is often "the agent is stuck on a typo"; let it grind cheaply.
+- Tier 2/3 is the bulk of normal work; 3-5 retries matches Eric Superboard's validated default.
+
+**Block reason format:** `cap-exhausted:tier-{N}:revision-{M}:{root-cause}` — surfaces in the Block column on the GitHub Projects board (Q-AI-21) AND in the dashboard. Examples:
+- `cap-exhausted:tier-1:revision-2:contract-test-fails-after-fix-attempt`
+- `cap-exhausted:tier-3:revision-6:lighthouse-mobile-below-90`
+
+The block reason becomes input to the "add a column when blocked repeatedly" meta-pattern (R-AISDLC-106): if 3+ tickets cluster on the same root cause within 14d, an ADR is raised proposing a new pipeline stage + specialized agent for that class of work.
 
 ---
 

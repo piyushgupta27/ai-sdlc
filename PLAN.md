@@ -71,6 +71,13 @@ These are the hard gates for declaring v1 complete.
 | Model router | `tools/sdlc/router/select-model.ts` | Routes per §12.2 table; logs decision; logs cost per call | — |
 | HITL queue | `.sdlc-queue/pending-hitl/` directory structure | Gate records (G1, G1.5, G2, G3, G5) written + read by dashboard | — |
 | Dashboard | `tools/sdlc/dashboard/` Next.js app on :3001 | Shows HITL queue + active tasks + 7d defect rate (zero data ok) | — |
+| GitHub Projects integration (Q-AI-21, R-AISDLC-100) | `tools/sdlc/orchestrator/github-projects.ts` | Reads/writes column state via gh CLI; onboarding creates project board with canonical columns | — |
+| `pnpm sdlc lint` verb (Q-AI-22, R-AISDLC-101) | `tools/sdlc/cli/commands/lint.ts` | Surfaces vague tickets in Ready + proposed AC fixes; user approves before dispatch | — |
+| PR iteration-history populator (Q-AI-23, R-AISDLC-102) | `tools/sdlc/agents/commit/pr-body.ts` | Auto-populates "Loop history" in PR body each cycle | — |
+| Tier-aware retry policy (Q-AI-26, R-AISDLC-105) | `tools/sdlc/orchestrator/retry-policy.ts` | Per-tier budget; exhaustion → Block + G2 | — |
+| `develop`-branch merge target (Q-AI-24, R-AISDLC-103) | onboarding flow + per-project config | Creates develop if absent; main requires manual PR from develop | — |
+| Mobile dispatch via ntfy.sh (Q-AI-25, R-AISDLC-104) | `tools/sdlc/cli/commands/dispatch.ts` + webhook config | `pnpm sdlc dispatch --webhook <topic>` fires orchestrator headless | — |
+| Slash command shortcuts (R-AISDLC-107) | `.claude/commands/sdlc-*.md` | Thin wrappers over CLI for interactive sessions | — |
 | First end-to-end pipeline run (ai-sdlc as testbed) | Audit log entry for first toy task | One Tier 3 toy task (e.g. add a typo fix to README) merged via pipeline | Critical — G1 + G1.5 + G2 + G3 + G5 all exercised |
 | Three-layer enforcement adversarial test | Audit log + RCA file | Manual attempt to write to `private/` blocked at all 3 layers | Critical |
 
@@ -81,6 +88,10 @@ These are the hard gates for declaring v1 complete.
 4. Three-layer enforcement adversarial test passes
 5. Dashboard renders correctly with zero data and with data
 6. Cost per Tier 3 task < $0.50
+7. GitHub Project board reflects ticket's journey across columns (Ready → ... → Done)
+8. `pnpm sdlc lint` flags a deliberately-vague test ticket with proposed AC fixes
+9. PR body contains auto-populated "Loop history" section
+10. Tier 0 retry cap (=0) tested: a deliberate Tier 0 build failure fires G2 immediately, no auto-retry
 
 ### Phase B — Testbed #1 (~1 week, week 4)
 

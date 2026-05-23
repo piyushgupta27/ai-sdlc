@@ -67,15 +67,36 @@ Design principles:
 
 ### 3.1 Entry points
 
-Adopted from Razorpay's three-door pattern, adapted for solo use:
+Adopted from Razorpay's three-door pattern + Eric Tech's Superboard mobile-dispatch pattern, adapted for solo use:
 
 | # | Door | When it fires | Implementation |
 |---|---|---|---|
 | 1 | **CLI** (`pnpm sdlc start <epic-id> --project <slug>`) | Piyush explicitly invokes the pipeline on an epic | Default path; lowest ceremony |
-| 2 | **macOS notification reply + dashboard** at `localhost:3001/sdlc` | HITL gates fire back to user; click → dashboard → approve/reject | Replaces Razorpay's Slack mention (no team to message); Q-AI-3 decision |
-| 3 | **Cron schedule** (`pnpm sdlc tick`) | Every 6h: SCOUT runs proactive checks (dep updates, DOM drift for adapters, perf regressions) and files issues that the planner picks up on next CLI run | Replaces Razorpay's scheduled skills |
+| 2 | **Slash commands** (`/sdlc-run`, `/sdlc-lint`, `/sdlc-status`, `/sdlc-board`, `/sdlc-next`) | Interactive Claude session; thin wrappers over CLI | R-AISDLC-107; lives at `.claude/commands/sdlc-*.md` |
+| 3 | **macOS notification reply + dashboard** at `localhost:3001/sdlc` | HITL gates fire back to user; click → dashboard → approve/reject | Q-AI-3 decision |
+| 4 | **Mobile webhook** via ntfy.sh (`pnpm sdlc dispatch --webhook <topic>`) | Remote trigger from anywhere; "I shipped from my phone" demo capability | Q-AI-25 / R-AISDLC-104; Superboard pattern (Telegram → ntfy.sh adapted) |
+| 5 | **Cron schedule** (`pnpm sdlc tick`) | Every 6h: SCOUT runs proactive checks (dep updates, DOM drift for adapters, perf regressions) and files issues PLANNER picks up on next CLI run | Replaces Razorpay's scheduled skills |
 
 No GitHub webhook on issue creation in v1 — that's Phase E territory.
+
+### 3.1.5 Orchestration substrate: GitHub Projects board (Q-AI-21, R-AISDLC-100)
+
+The state machine for each onboarded repo IS its GitHub Project board. Orchestrator reads/writes column state via `gh project item-edit`. Canonical columns:
+
+```
+Ready  →  Building  →  QA  →  Review  →  Done
+              ↑              (auto-merge → develop branch — Q-AI-24)
+              ↑
+        Blocked / Skipped (manual gates; "add a column" meta-pattern per R-AISDLC-106)
+```
+
+Why this substrate (adopted from Eric Tech's Superboard):
+- **Native to GitHub** — no separate UI; uses what every developer already has
+- **Public for public repos** — recruiter-visible kanban progress; portfolio signal
+- **State is visible** — anyone can see what's in flight without dashboard access
+- **Onboarding creates it** — `pnpm sdlc onboard` provisions the project board with canonical columns
+
+The local dashboard at `:3001` supplements (audit log query, cohort analytics, cost) but doesn't gatekeep — the GitHub Project board is the canonical "what's where" surface.
 
 ### 3.2 Pipeline diagram
 

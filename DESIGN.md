@@ -32,6 +32,9 @@ pnpm sdlc <group> <verb> [args]
 | `onboard` | Add a new project as a testbed |
 | `deboard` | Remove a project (target repo untouched) |
 | `start` | Run pipeline on an epic / task |
+| `dispatch` | Headless dispatch from CLI or webhook (Q-AI-25 mobile-trigger entry point) |
+| `lint` | Pre-dispatch ticket clarification — surfaces vague tickets in Ready column + proposed AC fixes (Q-AI-22) |
+| `board` | View / sync GitHub Project board state (Q-AI-21) |
 | `tick` | SCOUT cron entry point |
 | `status` | Project/pipeline state |
 | `audit` | Query audit log |
@@ -457,6 +460,90 @@ labels: ["kind:discussion"]
 
 ---
 
+## 3.6 `pnpm sdlc lint` — pre-dispatch ticket clarification (Q-AI-22, R-AISDLC-101)
+
+Adopted from Eric Tech's Superboard `/lint`. The single most-important UX in the autonomous loop: catches vague tickets BEFORE headless agents get stuck waiting for clarification they can't ask.
+
+```
+$ pnpm sdlc lint --project trip-research
+
+Scanning Ready column on trip-research GitHub Project... 4 tickets found.
+
+[1/4] #142 — "Fix the pricing page"
+  ❌ No acceptance criteria
+  ❌ No mockup / design reference
+  ⚠ "Fix" is not measurable
+
+  Proposed fix:
+    AC 1: Pricing page CTA button is not squished on mobile (375px viewport)
+    AC 2: Currency symbol renders correctly for INR (₹) on all plans
+    AC 3: Visual diff against design/pricing-page-v2.png ≤ 5%
+
+  [A]pprove · [E]dit · [D]efer to backlog · [S]kip
+  > A
+
+  ✓ Applied to issue #142
+
+[2/4] #143 — "Add MMT adapter"
+  ✓ Has acceptance criteria
+  ✓ Has source URL
+  ⚠ No rollback path specified for Tier 1 work
+
+  Proposed addition:
+    Rollback: revert to booking.com-only mode by removing MMT from
+    adapters/index.ts and re-running search; existing cache invalidated
+    via `pnpm sdlc cache clear --source mmt`.
+
+  [A]pprove · [E]dit · [S]kip
+  > A
+
+...
+
+Lint complete: 4 tickets reviewed, 3 fixes applied, 1 skipped.
+Ready to dispatch: pnpm sdlc dispatch --project trip-research
+```
+
+Why lint BEFORE dispatch: Eric's framework explicitly catches this — headless agents can't ask questions, so vague tickets stall in Block. Linting forces the clarification while the human is still in the loop. Operationalizes R-AISDLC-37 (ticket readiness check) as a user-facing step rather than an opaque PLANNER refusal.
+
+## 3.7 `pnpm sdlc dispatch` — headless trigger (Q-AI-25, R-AISDLC-104)
+
+Headless invocation of the orchestrator. Reads Ready column; dispatches agents per the tier matrix; runs until queue empty OR HITL hit OR cap exhaustion.
+
+```
+# From terminal
+$ pnpm sdlc dispatch --project trip-research
+
+# From phone via ntfy.sh webhook (mobile dispatch)
+# Subscribe to ntfy.sh/<your-topic> on phone; send POST from anywhere
+$ curl -d "dispatch trip-research" ntfy.sh/<your-topic>
+```
+
+The ntfy.sh webhook is the cleanest mobile entry point — no Telegram bot setup, no account, no token rotation. Self-hostable if needed. "I dispatched 3 tickets from my phone on the train; merged before I got home" is a real portfolio-grade demo.
+
+Per-project webhook topic stored in `projects/<slug>/config.json` under `webhookTopic`; only the orchestrator listens (one process, one topic).
+
+## 3.8 `pnpm sdlc board` — GitHub Projects sync (Q-AI-21, R-AISDLC-100)
+
+Shows the current state of the GitHub Project board for a project. Useful when the local dashboard is closed.
+
+```
+$ pnpm sdlc board --project trip-research
+
+trip-research · GitHub Project board state · 2026-06-15T14:23Z
+
+Ready (3):           Building (1):       QA (1):           Review (1):
+  #142 pricing-page    #143 mmt-adapter    #140 dedup-fix    #139 booking-detail
+
+Done (today, 4):                          Blocked (1):
+  #136 typo-readme                          #135 lighthouse-mobile-perf
+  #137 import-cleanup                         (cap-exhausted:tier-3:revision-6)
+  #138 add-search-input
+  #134 setup-tests-coverage
+
+GH Project: https://github.com/users/piyushgupta27/projects/N
+Dashboard:  http://localhost:3001/sdlc/projects/trip-research
+```
+
 ## 4. PR template
 
 ```markdown
@@ -500,6 +587,21 @@ labels: ["kind:discussion"]
 
 ## Reviewer fleet verdict
 <Filled by AGGREGATOR if agent-authored>
+
+## Loop history (auto-populated by COMMIT agent — Q-AI-23, R-AISDLC-102)
+
+| # | Stage | Agent | Model | Verdict | Duration | Audit run id |
+|---|---|---|---|---|---|---|
+| 1 | BUILD | builder | sonnet-4-6 | success | 18.4s | `<run-id>` |
+| 2 | TEST | tester | sonnet-4-6 | success | 9.2s | `<run-id>` |
+| 3 | REVIEW | security | opus-4-7 | PASS | 14.6s | `<run-id>` |
+| 4 | REVIEW | code-quality | opus-4-7 | CHANGES_REQUESTED | 12.1s | `<run-id>` |
+| 5 | BUILD (revision) | builder | sonnet-4-6 | success | 11.3s | `<run-id>` |
+| 6 | REVIEW (revision) | code-quality | opus-4-7 | PASS | 10.8s | `<run-id>` |
+| 7 | DEMO | demo | sonnet-4-6 vision | PASS, diff 1.2% | 38.4s | `<run-id>` |
+| 8 | COMMIT | commit | haiku-4-5 | merged → develop | 2.1s | `<run-id>` |
+
+**Iteration cap budget used:** 1 of 3 retries (Tier 2). 2 retries remaining.
 
 ---
 

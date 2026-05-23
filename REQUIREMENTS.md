@@ -17,6 +17,7 @@ This file is **append-mostly**. Old requirements stay (auditable history); statu
 | **R-AISDLC-50..69** | Multi-tenancy + onboarding |
 | **R-AISDLC-70..89** | Test-debt + readiness |
 | **R-AISDLC-90..99** | HITL gate spec |
+| **R-AISDLC-100..119** | UX + orchestration patterns adopted from Eric Tech's Superboard |
 | **R-GRD-1..9** | Non-negotiable guardrails |
 | **R-OPS-1..9** | Operational + repo policy |
 | **R-FUT-*** | Future scope (v1.5+) |
@@ -34,6 +35,7 @@ This file is **append-mostly**. Old requirements stay (auditable history); statu
 5. [Multi-tenancy + onboarding](#5-multi-tenancy--onboarding-r-aisdlc-50s)
 6. [Test-debt + readiness](#6-test-debt--readiness-r-aisdlc-70s)
 7. [HITL gate spec](#7-hitl-gate-spec-r-aisdlc-90s)
+7.5. [UX patterns adopted from Eric Tech's Superboard](#75-ux--orchestration-patterns-adopted-from-eric-techs-superboard-r-aisdlc-100s)
 8. [Non-negotiable guardrails (R-GRD)](#8-non-negotiable-guardrails-r-grd)
 9. [Operational + repo policy (R-OPS)](#9-operational--repo-policy-r-ops)
 10. [Future scope (R-FUT)](#10-future-scope-r-fut)
@@ -148,6 +150,24 @@ Per [HITL.md](./HITL.md) — five gates total.
 
 ---
 
+## 7.5 UX + orchestration patterns adopted from Eric Tech's Superboard (R-AISDLC-100s)
+
+Following review of Eric Tech's autonomous SDLC framework "Superboard" (YouTube: `nX_bGyIOFM4`, production proof at bookzero.ai). His skills bundle (`superboard` + `superbuild` + `superqa` + `superreview`) ships pull requests overnight via GitHub Project board state machine. We absorb the UX patterns that improve developer experience without compromising our safety architecture (tier system, three-layer enforcement, reviewer fleet stay as-is).
+
+| ID | Requirement | Source |
+|---|---|---|
+| **R-AISDLC-100** | **GitHub Projects board as primary orchestration surface.** Orchestrator reads/writes column state (Ready / Building / QA / Review / Done / Blocked / Skipped) instead of treating dashboard at :3001 as the only state. Public-repo benefit: visible kanban progress for portfolio reviewers. | Superboard pattern; bookzero.ai validated |
+| **R-AISDLC-101** | **`pnpm sdlc lint` as a standalone CLI verb.** Pre-dispatch ticket clarification step. Reads tickets in Ready column, flags vague AC, proposes fixes, applies on user approval. Operationalizes R-AISDLC-37 (ticket readiness check). | Superboard `/lint` UX |
+| **R-AISDLC-102** | **PR description auto-populated with iteration history.** COMMIT agent appends "Loop history" section listing each builder/QA/reviewer cycle with model + verdict + duration. Tier 0/1 also includes full audit-log run id table. | Superboard PR pattern |
+| **R-AISDLC-103** | **`develop` branch as default autonomous merge target.** Onboarding flow creates `develop` if absent + sets as merge target. `main` requires manual promotion (human PR from `develop`). Per-project override (set `mergeTarget: "main"` in `projects/<slug>/config.json` for greenfield projects with no production users). | Superboard pattern + safer production posture |
+| **R-AISDLC-104** | **Mobile dispatch via webhook.** Lightweight HTTP webhook trigger (ntfy.sh preferred over Telegram bot to avoid extra account ceremony). `pnpm sdlc dispatch --webhook <slug>` reads pending tickets in Ready, fires orchestrator headless. "I shipped from my phone" is a real demo capability. | Superboard Telegram pattern |
+| **R-AISDLC-105** | **Tier-aware iteration caps.** Refines the prior global "max 3 build/review cycles." New table: Tier 0 → 0 retries (HITL on first failure); Tier 1 → 1 retry; Tier 2 → 3 (current); Tier 3 → 5; Tier 4 → unlimited until manual stop. Cap exhaustion → Block column + auto-G2 HITL. | Superboard 3-cap + tier-aware refinement |
+| **R-AISDLC-106** | **"Add a column when blocked repeatedly" meta-pattern.** When N≥3 tickets cluster in Block with the same root cause within a 14-day window, raise an ADR (G1.5) to add a new pipeline stage + specialized agent. Example from Eric: Lighthouse <90 mobile blocked 3 times → add PERF stage + PERF-REVIEWER. This is how the pipeline grows. | Superboard "extend pipeline" pattern |
+| **R-AISDLC-107** | **Slash command shortcuts in `.claude/commands/`.** Thin wrappers over CLI verbs for interactive Claude sessions: `/sdlc-status`, `/sdlc-lint`, `/sdlc-run`, `/sdlc-next`, `/sdlc-board`. Coexists with `pnpm sdlc <verb>`; same source of truth. | Superboard `/board` `/lint` UX |
+| **R-AISDLC-108** | **Reference: Eric Tech's Superboard** (YouTube `nX_bGyIOFM4`; production proof at bookzero.ai). Adoption rationale documented per ID 100–107 above. Pattern changes here propagate as Eric's framework evolves. | Cross-model validation of architectural choices |
+
+---
+
 ## 8. Non-negotiable guardrails (R-GRD)
 
 User explicitly enumerated six. Violation = pipeline halt + RCA.
@@ -227,11 +247,24 @@ Decisions made + locked. Future changes require Q-AI-N+1 amendments, NOT edits t
 | **Q-AI-13** | License for ai-sdlc | AGPL-3.0 + CLA (preserves dual-license optionality, closes SaaS loophole) |
 | **Q-AI-14** | License for portfolio | MIT for code + "All Rights Reserved" for content |
 | **Q-AI-15** | License for private testbeds | "All Rights Reserved" placeholder |
-| **Q-AI-16** | Content destination (blog) | Own domain piyushgupta.io only; no Medium revival, no Substack | 
+| **Q-AI-16** | Content destination (blog) | Own domain piyushgupta.io only; no Medium revival, no Substack |
 | **Q-AI-17** | Domain | piyushgupta.io (user-owned; short, memorable, tech-industry-recognized TLD; DNS via Cloudflare) |
 | **Q-AI-18** | Reviewer fleet anti-monoculture mitigation (since same family) | Different temperature (0.3 builder, 0.7 reviewer) + cold-read hostile-eye reviewer prompt + smaller AGGREGATOR (Haiku) for scale-based independence |
 | **Q-AI-19** | Trust expansion data source | Real-use feedback via G5 (post-merge) + audit log defect rate + cohort tracking |
 | **Q-AI-20** | Cookie storage | git-crypt-encrypted JSON in `private/` per target repo; key at `~/Workspace/.<slug>-gitcrypt-key` |
+
+### Eric Tech Superboard adoptions (2026-05-23)
+
+After cross-validation against Eric Tech's "Superboard" framework (YouTube `nX_bGyIOFM4`; production proof at bookzero.ai). His pattern ships PRs overnight via GitHub Project board + dispatch loop. We adopt the UX surfaces that improve discoverability + portfolio appeal; keep our safety architecture (tier system, three-layer enforcement, reviewer fleet) unchanged because Eric's framework targets demo apps without secrets/PII while ours manages products with both.
+
+| # | Question | Decision |
+|---|---|---|
+| **Q-AI-21** | Primary orchestration surface | **GitHub Projects board** (Ready / Building / QA / Review / Done / Blocked / Skipped). Local dashboard at :3001 supplements but doesn't gatekeep. ADOPTED from Superboard. |
+| **Q-AI-22** | Pre-dispatch ticket clarification | **`pnpm sdlc lint <epic-id>`** as standalone CLI verb. Surfaces vague tickets + proposed AC fixes for user approval BEFORE orchestrator dispatches headless agents. ADOPTED from Superboard `/lint`. |
+| **Q-AI-23** | PR iteration history visibility | **COMMIT agent auto-populates PR body** with "Loop history" section: each build/QA/review cycle with model + verdict + duration. Audit log run id table for Tier 0/1. ADOPTED from Superboard. |
+| **Q-AI-24** | Default autonomous merge target | **`develop` branch** (not `main`). Onboarding flow creates `develop` + sets as target. `main` requires manual promotion via human PR from `develop`. Per-project override via `projects/<slug>/config.json` `mergeTarget` field. ADOPTED from Superboard + safer production posture. |
+| **Q-AI-25** | Mobile dispatch mechanism | **ntfy.sh webhook** (preferred over Telegram bot — no account setup, no token rotation, self-hostable). `pnpm sdlc dispatch --webhook <ntfy-topic>` triggers orchestrator headless. "I shipped from my phone" demo capability. ADOPTED-LITE from Superboard. |
+| **Q-AI-26** | Iteration cap policy | **Tier-aware** (refines prior global "max 3"): Tier 0 = 0 retries (HITL on first build failure); Tier 1 = 1 retry; Tier 2 = 3 (current); Tier 3 = 5; Tier 4 = unlimited until manual stop. Cap exhaustion → Block column + G2 HITL. REFINES prior decision. |
 
 ---
 
@@ -259,6 +292,8 @@ Decisions made + locked. Future changes require Q-AI-N+1 amendments, NOT edits t
 | Date | Change |
 |---|---|
 | 2026-05-22 | Initial draft. Migrated R-SDLC-* + Q-AI-1..12 from trip-research/REQUIREMENTS.md. Renamed prefix to R-AISDLC-* (this is the platform now, not a sub-section of trip-research). Added Q-AI-13..20 + R-AISDLC-50..57 (multi-tenancy) + R-AISDLC-70..73 (test-debt) + R-AISDLC-90..98 (HITL spec). |
+| 2026-05-23 | Domain swap: piyushgupta.dev → piyushgupta.io (user owns). |
+| 2026-05-23 | Absorbed Eric Tech Superboard patterns (cross-model architectural validation from YouTube nX_bGyIOFM4 + bookzero.ai production proof). Added Q-AI-21..26 + R-AISDLC-100..108: GitHub Projects as orchestration surface, `pnpm sdlc lint` verb, PR iteration history auto-population, develop-branch as default merge target, ntfy.sh mobile dispatch, tier-aware iteration caps, "add a column when blocked" meta-pattern, slash commands. |
 
 ---
 
