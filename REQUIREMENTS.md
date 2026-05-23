@@ -227,8 +227,8 @@ Decisions made + locked. Future changes require Q-AI-N+1 amendments, NOT edits t
 | **Q-AI-13** | License for ai-sdlc | AGPL-3.0 + CLA (preserves dual-license optionality, closes SaaS loophole) |
 | **Q-AI-14** | License for portfolio | MIT for code + "All Rights Reserved" for content |
 | **Q-AI-15** | License for private testbeds | "All Rights Reserved" placeholder |
-| **Q-AI-16** | Content destination (blog) | Own domain piyushgupta.dev only; no Medium revival, no Substack | 
-| **Q-AI-17** | Domain | piyushgupta.dev (.dev TLD signals engineer; Cloudflare DNS) |
+| **Q-AI-16** | Content destination (blog) | Own domain piyushgupta.io only; no Medium revival, no Substack | 
+| **Q-AI-17** | Domain | piyushgupta.io (user-owned; short, memorable, tech-industry-recognized TLD; DNS via Cloudflare) |
 | **Q-AI-18** | Reviewer fleet anti-monoculture mitigation (since same family) | Different temperature (0.3 builder, 0.7 reviewer) + cold-read hostile-eye reviewer prompt + smaller AGGREGATOR (Haiku) for scale-based independence |
 | **Q-AI-19** | Trust expansion data source | Real-use feedback via G5 (post-merge) + audit log defect rate + cohort tracking |
 | **Q-AI-20** | Cookie storage | git-crypt-encrypted JSON in `private/` per target repo; key at `~/Workspace/.<slug>-gitcrypt-key` |

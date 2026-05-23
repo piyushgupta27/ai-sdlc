@@ -50,7 +50,7 @@ Currently in planning. Phase A (foundation) work has not started. Track progress
 **Public roadmap testbeds (in order):**
 
 1. trip-research — local-first hotel meta-search across 6 Indian platforms (private)
-2. piyush-portfolio — personal portfolio + writing at piyushgupta.dev (public)
+2. piyush-portfolio — personal portfolio + writing at piyushgupta.io (public)
 3. career-automation — end-to-end job-search automation (private)
 4. ai-finance-tracker (private)
 5. ai-health-agent (private)
@@ -99,4 +99,4 @@ If you want to use ai-sdlc in a commercial product or hosted service without the
 
 ## Author
 
-Piyush Gupta · Engineering Manager at slice · [piyushgupta.dev](https://piyushgupta.dev) *(coming soon)* · [LinkedIn](https://www.linkedin.com/in/piyushgupta27)
+Piyush Gupta · Engineering Manager at slice · [piyushgupta.io](https://piyushgupta.io) · [LinkedIn](https://www.linkedin.com/in/piyushgupta27)

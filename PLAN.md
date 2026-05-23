@@ -48,7 +48,7 @@ These are the hard gates for declaring v1 complete.
 | PR template | `.github/pull_request_template.md` | Structured template (epic link, AC, tier, audit run) | Phase A |
 | Labels | GitHub labels API | tier:0/1/2/3/4, kind:*, status:*, area:* | Phase A |
 | Branch protection on main | GitHub repo settings | Required CI checks, no direct push, linear history | Phase A |
-| Domain registration | `piyushgupta.dev` | Domain owned, parked on Cloudflare DNS | Pending (user) |
+| Domain registration | `piyushgupta.io` | Domain owned, parked on Cloudflare DNS | Pending (user) |
 
 **Pass criteria for Phase 0:** ai-sdlc repo is public + has the planning suite + has hygiene files. GitHub profile signals the work.
 
@@ -113,12 +113,12 @@ These are the hard gates for declaring v1 complete.
 |---|---|---|
 | Create `~/Workspace/piyush-portfolio/` (Next.js + MDX scaffold) | Empty repo with package.json + Next.js + MDX + Tailwind + shadcn | — (manual scaffold) |
 | Onboard piyush-portfolio | Phase 0-1 from ONBOARDING.md complete | Medium |
-| Pipeline builds portfolio v0.1 | Home page + 2 project case studies + 1 blog post live on piyushgupta.dev | High — multi-epic |
+| Pipeline builds portfolio v0.1 | Home page + 2 project case studies + 1 blog post live on piyushgupta.io | High — multi-epic |
 | Vercel deployment pipeline | Auto-deploy on push to main | Auto |
 | Open Graph image generation | Vercel OG generates social cards per post | Auto |
 
 **Phase C pass criteria:**
-1. piyushgupta.dev is live
+1. piyushgupta.io is live
 2. 2 project case studies + 1 blog post visible
 3. Pipeline produced ≥60% of the code
 4. Domain DNS routed correctly
