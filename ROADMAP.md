@@ -21,6 +21,61 @@ Phase pass criteria are in [PLAN.md](./PLAN.md).
 
 ---
 
+## v1 / v1.5+ scope split
+
+Phase A below describes the full pipeline. **v1 ships the slim subset; v1.5+ items are pre-planned but graduate only when real data justifies them.** This sequencing is the difference between shipping in ~6 days vs ~3 weeks for the foundation.
+
+### v1 — slim Phase A (~6 days, ship-it MVP)
+
+The minimum to operate as team lead with AI agents as devs:
+
+| # | Deliverable | Notes |
+|---|---|---|
+| 1 | GitHub Projects board with canonical columns | Ready / Building / QA / Review / Done / Blocked |
+| 2 | 4 agents: PLANNER, BUILDER, TESTER, REVIEWER (single, generalist), REPORTER | Specialized fleet (2→4→6) is v1.5+ |
+| 3 | CLI verbs: `pnpm sdlc onboard / lint / dispatch / status / board` | Other verbs land in v1.5+ as needed |
+| 4 | Simple JSONL audit log per agent run | Hash chain + SQLite archive is v1.5+ |
+| 5 | **G2 REVIEW gate only** (Block column for HITL escalation) | G1, G1.5, G3, G5 are v1.5+ |
+| 6 | CLAUDE.md per project — Red zone for **secrets + cookies only** (2-3 paths max) | Full tier 0/1 system is v1.5+ |
+| 7 | Pre-commit hook checks Red zone (Layer 2 only) | Layer 3 CI workflow is v1.5+ |
+| 8 | `develop` branch as merge target | Per-project override later |
+| 9 | Global max-3 retries → Block | Tier-aware caps (Q-AI-26) is v1.5+ |
+| 10 | ntfy.sh mobile dispatch | Per Q-AI-25 |
+| 11 | PR body auto-populated with iteration history | Per Q-AI-23 |
+
+That's it. Eleven items. ~6 days. Real working pipeline shipping PRs to develop.
+
+### v1.5+ — graduates when data justifies
+
+The full pipeline as documented in ARCHITECTURE.md / HITL.md / REQUIREMENTS.md. Each pattern below has a specific trigger:
+
+| v1.5+ pattern | Graduates when |
+|---|---|
+| Specialized reviewer fleet (4.4a-f) | Single reviewer misses a class of bugs 3+ times; OR new dimension surfaces (perf, i18n) |
+| G1 PLAN gate | PLANNER produces decompositions you wish you'd approved before they ran |
+| G1.5 ADR gate | You're making architectural calls in GitHub Discussions and want a structured surface |
+| G3 DEMO gate | A PR ships and the AC was met but the user experience was wrong |
+| G5 POST-MERGE gate | A merge passes G2 but you discover it broke in real use 24h later |
+| Three-layer enforcement Layer 3 (CI workflow) | Pre-commit hook missed a Red zone touch in one of the testbeds |
+| Hash-chained audit log | You go multi-user OR need cryptographic tamper detection (rare; expect to defer) |
+| Trust state machine (5 states + formal trust criteria) | Ad-hoc MANUAL ↔ AUTO toggle stops scaling; you want data-driven autonomy expansion |
+| Tier system 0-4 (full) + tier-aware retry caps | 2-tier (HITL / no-HITL) coarseness causes friction |
+| Repo Readiness Score (40/30/30) | You onboard 3+ projects and want consistent gating |
+| Multi-tenant infrastructure (full) | 2nd testbed onboards (career-automation, portfolio) |
+| AI filter layer for reviewer findings | First time a reviewer comment is dropped that turned out to be real |
+| Prompt cache derivation logic | Cost crosses $50/month sustained |
+| Slash command shortcuts (`.claude/commands/sdlc-*`) | Interactive Claude sessions feel slower than CLI for your daily workflow |
+
+### Why this split
+
+- **Eric's Superboard** ships PRs in production at single-developer scale with much less apparatus. We don't need more until we have data showing we do.
+- **Razorpay's Slash** earns its complexity at 1000 PRs/week across 200+ engineers. We're at ~5 PRs/week solo.
+- The slim v1 is enough to "act as team lead with AI agents as devs."
+- v1.5+ patterns are pre-planned (ARCHITECTURE.md / HITL.md / REQUIREMENTS.md), so adding them later isn't from-scratch work. This section is just a sequencing decision.
+- **Nothing is deleted from the planning suite.** Everything stays as the architectural north star. We just don't build it all in Phase A.
+
+---
+
 ## Testbed onboarding sequence
 
 The order is deliberate. trip-research first because it has existing code (validates pipeline on legacy + test-debt scenario). Portfolio second because it's net-new (validates pipeline on greenfield) AND interview-urgent. Career-automation third because it's the most complex existing project. Finance and health follow as lower-priority private repos.

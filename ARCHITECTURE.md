@@ -65,6 +65,8 @@ Design principles:
 
 ## 3. Pipeline architecture
 
+> **v1 scope note (2026-05-23):** This section describes the **full target architecture**. v1 (slim Phase A, ~6 days) wires a subset: orchestrator + 4 agents (PLANNER, BUILDER, TESTER, REVIEWER as one generalist, REPORTER) + G2 HITL gate + plain JSONL audit + Layers 1+2 of enforcement + GitHub Project board substrate. The specialized reviewer fleet (§4.4 subsections beyond a generalist REVIEWER), AGGREGATOR + AI filter (§4.4-AGG), full 5-gate HITL (§7 G1/G1.5/G3/G5), trust state machine (§11), hash-chained audit (§8), Layer 3 CI enforcement (§7 G1.3), and Repo Readiness Score (§5.0) are pre-specified here but **graduate per the v1.5+ table in [ROADMAP.md](./ROADMAP.md)**. Read this section as architectural intent; read ROADMAP for what ships when.
+
 ### 3.1 Entry points
 
 Adopted from Razorpay's three-door pattern + Eric Tech's Superboard mobile-dispatch pattern, adapted for solo use:

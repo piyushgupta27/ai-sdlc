@@ -26,6 +26,38 @@ This file is **append-mostly**. Old requirements stay (auditable history); statu
 
 ---
 
+## v1 vs v1.5+ scope summary (added 2026-05-23)
+
+> Most R-AISDLC entries below describe the full architectural target. **v1 (slim Phase A, ~6 days) ships a subset; v1.5+ items graduate when data justifies them.** Nothing is deleted from this registry — sequencing is documented in [ROADMAP.md](./ROADMAP.md) "v1 / v1.5+ scope split."
+
+**v1 ships:**
+- R-AISDLC-1..13 (pipeline workflow + autonomy goals) — yes, with 1 reviewer not fleet
+- R-AISDLC-20..24 (5 design directives: auditability, context, validations, HITL, harness) — yes, in slim form
+- R-AISDLC-30 (CLAUDE.md per module) — yes, but slim Red zone (secrets + cookies only, 2-3 paths)
+- R-AISDLC-32 (three-layer enforcement) — Layers 1+2 only; Layer 3 CI is v1.5+
+- R-AISDLC-36 (smart model routing) — Sonnet default, Opus for review + debug, Haiku for reporter
+- R-AISDLC-37 (ticket readiness check) — via `pnpm sdlc lint` verb
+- R-AISDLC-50..57 (multi-tenancy basics) — yes, but full multi-tenant infra activates when 2nd testbed onboards
+- R-AISDLC-70..73 (test-debt-first onboarding) — yes
+- R-AISDLC-90 G1 + R-AISDLC-92 G2 — **G2 only in v1**; G1 deferred to v1.5+
+- R-AISDLC-100..104 (Eric Tech absorptions: GH Projects, lint, PR loop history, develop branch, ntfy.sh) — yes
+- R-AISDLC-108 (parent references) — yes
+
+**v1.5+ graduates:**
+- R-AISDLC-31 (specialized reviewer fleet 4.4a-f) — single REVIEWER in v1; fleet graduates per ROADMAP triggers
+- R-AISDLC-33 (Repo Readiness Score) — manual 70% coverage check in v1
+- R-AISDLC-34 (AI filter layer) — needs reviewer fleet first
+- R-AISDLC-35 (prompt caching of CONTEXT tree) — defer until cost crosses $50/mo
+- R-AISDLC-38 (trust expansion formal criteria) — ad-hoc MANUAL↔AUTO toggle in v1
+- R-AISDLC-91 G1.5 ADR + R-AISDLC-93 G3 DEMO + R-AISDLC-94 G5 POST-MERGE — graduate per ROADMAP triggers
+- R-AISDLC-105 (tier-aware retry caps) — global max-3 in v1; tier-aware refinement in v1.5+
+- R-AISDLC-106 ("add a column" meta-pattern) — applies in v1.5+ when block-cluster data accumulates
+- R-AISDLC-107 (slash command shortcuts) — defer; CLI is enough for v1
+
+The full architectural target stays the north star. Each v1.5+ item activates on a specific trigger documented in ROADMAP.md's v1.5+ table.
+
+---
+
 ## Table of contents
 
 1. [Pipeline workflow](#1-pipeline-workflow-contract)

@@ -1,12 +1,20 @@
 # ai-sdlc · HITL — Human-in-the-Loop Gates
 
-> Five gates where the human (you) intervenes. Calibrated to blast-radius tier. Updated 2026-05-22.
+> Five gates where the human (you) intervenes. Calibrated to blast-radius tier. Updated 2026-05-23.
 
 The whole point of ai-sdlc is to let agents do routine work AND let the human stay in control of the decisions that matter. This doc defines the five gates, what fires them, what you see, and how you respond.
 
 ---
 
-## The five gates
+## v1 vs v1.5+ scope (Phase A sequencing)
+
+> **v1 ships ONE gate: G2 REVIEW.** The Block column on the GitHub Project board IS the v1 HITL surface. The other 4 gates below (G1 PLAN, G1.5 ADR, G3 DEMO, G5 POST-MERGE) are pre-specified architectural commitments that **graduate to v1 when data justifies them.** See [ROADMAP.md](./ROADMAP.md) "v1 / v1.5+ scope split" for the activation triggers per gate.
+>
+> The full 5-gate spec below is the architectural target. v1 implements only the G2 sections; v1.5+ adds the rest as needed.
+
+---
+
+## The five gates (full target spec — v1 implements G2 only)
 
 | Gate | When it fires | What the human does |
 |---|---|---|
