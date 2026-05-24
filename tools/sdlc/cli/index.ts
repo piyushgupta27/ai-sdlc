@@ -18,6 +18,7 @@
  */
 
 import { runBoard } from './commands/board.js'
+import { runDashboard } from './commands/dashboard.js'
 import { runDispatch } from './commands/dispatch.js'
 import { runLint } from './commands/lint.js'
 import { runOnboard } from './commands/onboard.js'
@@ -35,6 +36,7 @@ Pipeline operations
   lint               Pre-dispatch ticket clarification
   dispatch           Run the orchestrator (CLI or webhook entry)
   board              View / sync GitHub Project board state
+  dashboard          Start local dashboard at localhost:3001
 
 Common flags
   --project <slug>   Target project (required for most commands)
@@ -54,6 +56,7 @@ const COMMANDS: Record<string, CommandHandler> = {
   dispatch: runDispatch,
   status: runStatus,
   board: runBoard,
+  dashboard: runDashboard,
 }
 
 async function main(): Promise<number> {
