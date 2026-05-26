@@ -1,24 +1,35 @@
 /**
  * `pnpm sdlc dispatch --project <slug>` — orchestrator headless run.
  *
- * Q-AI-25 / R-AISDLC-104: also accepts webhook trigger via ntfy.sh.
+ * Two paths:
+ *   (a) --task-spec <file>  — manual test path; runs orchestrator on a single
+ *       hand-crafted Task JSON spec. Useful for debugging.
+ *   (b) (default)            — reads the Ready column on the GitHub Project
+ *       board, takes the first ticket, runs the orchestrator, and moves the
+ *       card based on outcome (Done / Blocked).
  *
- * v1 flow:
- *   1. Read project state
- *   2. (Step 6) Read GitHub Project Ready column for next ticket
- *   3. Run orchestrator.runTask() on that ticket
- *   4. Update column based on result (Building → QA → Review → Done/Blocked)
- *   5. Loop until queue empty OR HITL gate fires
- *
- * v1 stub: GitHub Projects integration is Step 6. This command currently
- * accepts a --task-spec JSON flag for manual testing of the orchestrator
- * loop without needing a real GitHub Project board.
+ * Webhook mode (--webhook --topic <ntfy>) subscribes to ntfy.sh and dispatches
+ * on every received `dispatch <slug>` message.
  */
 
 import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  type ProjectItem,
+  findProject,
+  listItems,
+  moveItem,
+} from '../../integrations/github-projects.js'
+import { parseDispatchTrigger, subscribe } from '../../integrations/ntfy.js'
 import { runTask } from '../../orchestrator/index.js'
-import { readState } from '../../orchestrator/state.js'
-import { type Task, asProjectSlug } from '../../types/index.js'
+import { projectDir, readState } from '../../orchestrator/state.js'
+import {
+  type ProjectSlug,
+  type Task,
+  type Tier,
+  asProjectSlug,
+} from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 
 const HELP = `pnpm sdlc dispatch — run the orchestrator on a project
@@ -27,18 +38,22 @@ Usage:
   pnpm sdlc dispatch --project <slug> [options]
 
 Options:
-  --task-spec <file>   Path to a JSON file with a Task spec (manual testing
-                       fallback until GH Projects integration ships in Step 6)
-  --max-tasks <n>      Stop after processing N tasks (default 5)
-  --webhook            Read trigger from stdin (ntfy.sh integration; Step 6)
+  --task-spec <file>   Hand-crafted Task JSON (manual testing path)
+  --max-tasks <n>      Stop after N tasks (default 5)
+  --webhook            Subscribe to ntfy.sh and dispatch on each trigger
+  --topic <name>       ntfy.sh topic to subscribe to (required if --webhook)
+  --owner <handle>     GitHub owner (defaults to project config)
   --json               JSON output
 
 Examples:
-  # Run on next ticket from the project board (Step 6+)
+  # Take next ticket from Ready column
   pnpm sdlc dispatch --project trip-research
 
-  # Test orchestrator with a hand-crafted task spec
-  pnpm sdlc dispatch --project trip-research --task-spec ./tmp/task.json
+  # Manual test with a hand-crafted Task
+  pnpm sdlc dispatch --project trip-research --task-spec /tmp/task.json
+
+  # Mobile dispatch — subscribe to ntfy; trigger from phone
+  pnpm sdlc dispatch --project trip-research --webhook --topic <ntfy-slug>
 `
 
 export async function runDispatch(argv: readonly string[]): Promise<number> {
@@ -55,12 +70,8 @@ export async function runDispatch(argv: readonly string[]): Promise<number> {
     process.stderr.write(`❌ ${(e as Error).message}\n${HELP}`)
     return 2
   }
-
   const slug = asProjectSlug(slugRaw)
-  const taskSpec = getFlag(args, 'task-spec')
-  // const maxTasks = Number.parseInt(getFlag(args, 'max-tasks') ?? '5', 10)
 
-  // Verify project is onboarded
   const state = await readState(slug)
   if (!state.ok) {
     process.stderr.write(`❌ ${state.error.message}\n`)
@@ -73,56 +84,26 @@ export async function runDispatch(argv: readonly string[]): Promise<number> {
     return 1
   }
 
-  // v1 manual path: --task-spec
-  if (taskSpec) {
-    return await dispatchManualSpec(slug, taskSpec)
+  const taskSpec = getFlag(args, 'task-spec')
+  const isWebhook = hasFlag(args, 'webhook')
+  const topic = getFlag(args, 'topic')
+  const maxTasks = Number.parseInt(getFlag(args, 'max-tasks') ?? '5', 10)
+
+  if (taskSpec) return dispatchManualSpec(slug, taskSpec)
+  if (isWebhook) {
+    if (!topic) {
+      process.stderr.write(`❌ --webhook requires --topic <ntfy-topic>\n`)
+      return 2
+    }
+    return dispatchWebhookLoop(slug, topic, maxTasks)
   }
 
-  // v1.5+ / Step 6 path: read from GH Project board
-  process.stdout.write(`
-${slug} · dispatch
-
-GitHub Projects integration (reading the Ready column) ships in Step 6.
-Until then, run a single task by passing --task-spec:
-
-  cat > /tmp/task.json <<EOF
-  {
-    "project": "${slug}",
-    "id": "test.1.1",
-    "storyId": "test.1",
-    "epicId": "test",
-    "title": "Toy test task",
-    "description": "Describe the work for BUILDER here",
-    "tier": 3,
-    "dod": {
-      "acceptanceCriteria": ["AC1", "AC2"],
-      "nfr": [],
-      "testsRequired": ["unit"],
-      "coverageFloor": 70,
-      "contextUpdates": [],
-      "requiresAdr": false
-    },
-    "estimatedCostUsd": 0.50,
-    "dependsOn": [],
-    "blocks": [],
-    "expectedFiles": [],
-    "stage": "PLAN",
-    "status": "planned",
-    "createdAt": "${new Date().toISOString()}",
-    "updatedAt": "${new Date().toISOString()}"
-  }
-  EOF
-
-  pnpm sdlc dispatch --project ${slug} --task-spec /tmp/task.json
-`)
-
-  return 0
+  return dispatchFromBoard(slug, args, maxTasks)
 }
 
-async function dispatchManualSpec(
-  slug: import('../../types/index.js').ProjectSlug,
-  taskSpecPath: string,
-): Promise<number> {
+// ─── manual: --task-spec ─────────────────────────────────────────────────
+
+async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Promise<number> {
   let task: Task
   try {
     const raw = await readFile(taskSpecPath, 'utf8')
@@ -132,11 +113,11 @@ async function dispatchManualSpec(
     return 1
   }
 
-  // Read repo path from project config
-  const { join } = await import('node:path')
-  const cfgPath = join(process.cwd(), 'projects', slug, 'config.json')
-  const cfgRaw = await readFile(cfgPath, 'utf8')
-  const cfg = JSON.parse(cfgRaw) as { repoPath: string }
+  const cfg = await readConfig(slug)
+  if (!cfg) {
+    process.stderr.write(`❌ Cannot read project config for ${slug}\n`)
+    return 1
+  }
 
   process.stdout.write(
     `\nDispatching ${task.id} on ${slug} (tier ${task.tier}, target=${cfg.repoPath})...\n\n`,
@@ -150,14 +131,202 @@ async function dispatchManualSpec(
   })
 
   if (!result.ok) {
-    process.stderr.write(`❌ Dispatch failed: ${result.error.code} — ${result.error.message}\n`)
-    if (result.error.fix) {
-      process.stderr.write(`   Fix: ${result.error.fix}\n`)
-    }
+    process.stderr.write(`❌ ${result.error.code} — ${result.error.message}\n`)
+    if (result.error.fix) process.stderr.write(`   Fix: ${result.error.fix}\n`)
+    return 1
+  }
+  return printOutcome(result.value)
+}
+
+// ─── default: read Ready column on GH Project board ──────────────────────
+
+async function dispatchFromBoard(
+  slug: ProjectSlug,
+  args: ReturnType<typeof parseArgs>,
+  maxTasks: number,
+): Promise<number> {
+  const cfg = await readConfig(slug)
+  if (!cfg) {
+    process.stderr.write(`❌ Cannot read project config\n`)
     return 1
   }
 
-  const outcome = result.value
+  const owner = typeof args.flags.owner === 'string' ? args.flags.owner : cfg.owner
+  const project = await findProject(owner, slug)
+  if (!project.ok) {
+    process.stderr.write(`❌ ${project.error.message}\n`)
+    if (project.error.fix) process.stderr.write(`   ${project.error.fix}\n`)
+    return 1
+  }
+
+  let processed = 0
+  while (processed < maxTasks) {
+    const ready = await listItems(project.value, 'Ready')
+    if (!ready.ok) {
+      process.stderr.write(`❌ ${ready.error.message}\n`)
+      return 1
+    }
+    const next = ready.value[0]
+    if (!next) {
+      process.stdout.write(`\nReady column empty. Processed ${processed} task(s).\n`)
+      return 0
+    }
+
+    // Convert ProjectItem → Task (heuristic; PLANNER would do this more thoroughly)
+    const task = projectItemToTask(slug, next)
+
+    // Move to Building
+    const moveResult = await moveItem(project.value, next.id, 'Building')
+    if (!moveResult.ok) {
+      process.stderr.write(`❌ Failed to move card to Building: ${moveResult.error.message}\n`)
+      return 1
+    }
+
+    process.stdout.write(`\n→ ${task.id} (#${next.content.number}) "${task.title}" [tier:${task.tier}]\n`)
+
+    const result = await runTask({
+      project: slug,
+      task,
+      targetRepo: cfg.repoPath,
+      branch: `feature/${task.id}`,
+    })
+
+    if (!result.ok) {
+      process.stderr.write(`  ❌ ${result.error.message}\n`)
+      await moveItem(project.value, next.id, 'Blocked')
+      return 1
+    }
+
+    // Move card based on outcome
+    const outcome = result.value
+    const nextCol =
+      outcome.result === 'merged' ? 'Done' : outcome.result === 'hitl-pending' ? 'Blocked' : 'Blocked'
+    await moveItem(project.value, next.id, nextCol)
+    printOutcome(outcome)
+
+    processed++
+
+    if (outcome.result === 'hitl-pending' || outcome.result === 'failed') {
+      process.stdout.write(`Stopping dispatch loop — HITL/failure on ${task.id}\n`)
+      return outcome.result === 'failed' ? 1 : 0
+    }
+  }
+
+  process.stdout.write(`\nReached --max-tasks (${maxTasks}). Stopping.\n`)
+  return 0
+}
+
+// ─── webhook: subscribe to ntfy.sh ───────────────────────────────────────
+
+async function dispatchWebhookLoop(
+  slug: ProjectSlug,
+  topic: string,
+  maxTasks: number,
+): Promise<number> {
+  process.stdout.write(`\n🔔 Subscribed to ntfy.sh/${topic}\n   Send "dispatch ${slug}" from anywhere to trigger.\n   Ctrl-C to stop.\n\n`)
+
+  let dispatched = 0
+  for await (const msg of subscribe({ topic })) {
+    const trigger = parseDispatchTrigger(msg)
+    if (!trigger) continue
+    if (trigger.slug !== slug) {
+      process.stdout.write(`(received trigger for ${trigger.slug}; this dispatcher is bound to ${slug} — skipping)\n`)
+      continue
+    }
+
+    process.stdout.write(`\n📥 Trigger received: ${msg.message}\n`)
+    // Synthesize argv for dispatchFromBoard
+    const fakeArgs = { _: [], flags: { project: slug } } as ReturnType<typeof parseArgs>
+    await dispatchFromBoard(slug, fakeArgs, maxTasks)
+    dispatched++
+
+    if (dispatched >= 1000) {
+      // Safety cap; webhook listener shouldn't run forever in practice
+      process.stdout.write(`Hit 1000-dispatch cap; restart the listener if you want more.\n`)
+      return 0
+    }
+  }
+
+  return 0
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────
+
+interface MinimalConfig {
+  readonly repoPath: string
+  readonly owner: string
+}
+
+async function readConfig(slug: ProjectSlug): Promise<MinimalConfig | null> {
+  const cfgPath = join(projectDir(slug), 'config.json')
+  if (!existsSync(cfgPath)) return null
+  const raw = await readFile(cfgPath, 'utf8')
+  const cfg = JSON.parse(raw) as { repoPath?: string; owner?: string }
+  if (!cfg.repoPath || !cfg.owner) return null
+  return { repoPath: cfg.repoPath, owner: cfg.owner }
+}
+
+function projectItemToTask(slug: ProjectSlug, item: ProjectItem): Task {
+  const tierLabel = item.content.labels?.find((l) => l.startsWith('tier:'))
+  const tier: Tier =
+    tierLabel === 'tier:0'
+      ? 0
+      : tierLabel === 'tier:1'
+        ? 1
+        : tierLabel === 'tier:2'
+          ? 2
+          : tierLabel === 'tier:3'
+            ? 3
+            : tierLabel === 'tier:4'
+              ? 4
+              : 2
+
+  const body = item.content.body ?? ''
+  const acMatch = body.match(/##?\s*acceptance criteria\s*\n((?:.|\n)*?)(?:\n##|\n$|$)/i)
+  const acs: string[] = acMatch
+    ? (acMatch[1]?.match(/^\s*[-*]\s+(.+)$/gm) ?? []).map((line) => line.replace(/^\s*[-*]\s+/, ''))
+    : []
+
+  const taskId = `gh-${item.content.number}`
+  const now = new Date().toISOString()
+
+  return {
+    project: slug,
+    id: taskId,
+    storyId: taskId,
+    epicId: taskId,
+    title: item.title,
+    description: body,
+    tier,
+    dod: {
+      acceptanceCriteria: acs,
+      nfr: [],
+      testsRequired: ['unit'],
+      coverageFloor: tier <= 1 ? 85 : 70,
+      contextUpdates: [],
+      requiresAdr: false,
+    },
+    estimatedCostUsd: 0.5,
+    dependsOn: [],
+    blocks: [],
+    expectedFiles: [],
+    stage: 'PLAN',
+    status: 'planned',
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function printOutcome(outcome: {
+  readonly taskId: string
+  readonly result: string
+  readonly stage: string
+  readonly retriesUsed: number
+  readonly auditRunIds: readonly string[]
+  readonly costUsd: number
+  readonly durationMs: number
+  readonly notes?: string
+}): number {
   process.stdout.write(`
 ✓ Task ${outcome.taskId} ${outcome.result.toUpperCase()}
   Final stage:    ${outcome.stage}
@@ -168,6 +337,5 @@ async function dispatchManualSpec(
   ${outcome.notes ? `Notes:          ${outcome.notes}` : ''}
 
 `)
-
   return outcome.result === 'failed' ? 1 : 0
 }

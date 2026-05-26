@@ -36,8 +36,13 @@ import {
   makeError,
   ok,
 } from '../types/index.js'
+import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { notify } from '../integrations/ntfy.js'
 import { writeAuditRow } from './audit-log.js'
 import { buildG2Request, enqueue } from './hitl-queue.js'
+import { projectDir } from './state.js'
 import { shouldRetry } from './retry-policy.js'
 import { readState, updateState } from './state.js'
 
@@ -400,6 +405,9 @@ async function escalateToG2(
     hitlQueueDepth: s.hitlQueueDepth + 1,
   }))
 
+  // Fire ntfy notification if a topic is configured (best-effort; non-blocking)
+  await maybeNotifyG2(opts.project, opts.task, request.id, reviewOutput.verdict)
+
   return ok({
     taskId: opts.task.id,
     result: 'hitl-pending',
@@ -410,6 +418,40 @@ async function escalateToG2(
     durationMs: performance.now() - startTime,
     notes: `G2 gate enqueued: ${request.id}`,
   })
+}
+
+/**
+ * Send a ntfy notification when a G2 gate fires, IF the project config has
+ * a `webhookTopic` set. Best-effort: any failure (no config, no network,
+ * non-2xx) is swallowed and logged to stderr.
+ */
+async function maybeNotifyG2(
+  project: ProjectSlug,
+  task: { readonly id: string; readonly title: string; readonly tier: Tier },
+  gateId: string,
+  verdict: string,
+): Promise<void> {
+  try {
+    const cfgPath = join(projectDir(project), 'config.json')
+    if (!existsSync(cfgPath)) return
+    const cfg = JSON.parse(await readFile(cfgPath, 'utf8')) as { webhookTopic?: string }
+    if (!cfg.webhookTopic) return
+
+    await notify(
+      { topic: cfg.webhookTopic },
+      {
+        title: `ai-sdlc · G2 ${verdict} on ${project}`,
+        message: `${task.id} — ${task.title} (tier:${task.tier})\nGate: ${gateId}\nOpen the dashboard to approve / request changes / reject.`,
+        priority: task.tier <= 1 ? 5 : 3,
+        clickUrl: `http://localhost:3001/queue/${gateId}`,
+        tags: ['robot', 'mag'],
+      },
+    )
+  } catch (cause) {
+    process.stderr.write(
+      `(ntfy notify failed; non-blocking): ${cause instanceof Error ? cause.message : String(cause)}\n`,
+    )
+  }
 }
 
 async function escalate(
