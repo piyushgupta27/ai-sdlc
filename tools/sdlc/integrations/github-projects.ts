@@ -182,15 +182,24 @@ export async function listItems(
   ])
   if (!result.ok) return result
 
+  // `gh project item-list --format json` can embed literal control chars
+  // (newlines, tabs) inside string values when issue bodies have multi-line
+  // content. That's invalid JSON. Fall back to a sanitized retry if parse
+  // fails — escape control characters inside what's clearly string content.
   let json: { items?: Array<Record<string, unknown>> }
   try {
     json = JSON.parse(result.value.stdout)
-  } catch (cause) {
-    return err(
-      makeError('gh-projects.parse-failed', 'Could not parse item-list output', {
-        cause,
-      }),
-    )
+  } catch {
+    const sanitized = sanitizeJsonControlChars(result.value.stdout)
+    try {
+      json = JSON.parse(sanitized)
+    } catch (cause) {
+      return err(
+        makeError('gh-projects.parse-failed', 'Could not parse item-list output', {
+          cause,
+        }),
+      )
+    }
   }
 
   const items: ProjectItem[] = (json.items ?? []).map((raw) => {
@@ -336,4 +345,45 @@ async function runGh(args: readonly string[]): Promise<Result<RunResult, AppErro
       )
     })
   })
+}
+
+/**
+ * Sanitize literal control characters that `gh project item-list --format
+ * json` sometimes embeds inside string values (issue bodies with newlines).
+ * State machine: track whether we're inside a JSON string literal, and only
+ * escape control chars there. Outside strings, control chars (whitespace
+ * between tokens) are valid JSON.
+ */
+function sanitizeJsonControlChars(raw: string): string {
+  let out = ''
+  let inString = false
+  let escapeNext = false
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw.charCodeAt(i)
+    const ch = raw[i] ?? ''
+    if (escapeNext) {
+      out += ch
+      escapeNext = false
+      continue
+    }
+    if (ch === '\\' && inString) {
+      out += ch
+      escapeNext = true
+      continue
+    }
+    if (ch === '"') {
+      inString = !inString
+      out += ch
+      continue
+    }
+    if (inString && c < 0x20) {
+      if (ch === '\n') out += '\\n'
+      else if (ch === '\r') out += '\\r'
+      else if (ch === '\t') out += '\\t'
+      else out += `\\u${c.toString(16).padStart(4, '0')}`
+      continue
+    }
+    out += ch
+  }
+  return out
 }
