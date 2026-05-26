@@ -1,27 +1,26 @@
 /**
- * `pnpm sdlc board --project <slug>` — show GitHub Project board state.
+ * `pnpm sdlc board --project <slug>` — render the GitHub Project board state.
  *
- * v1 stub: shells out to `gh project item-list` and groups by column.
- * Full GitHub Projects integration (the orchestrator-side reader/writer)
- * lands as a separate module in Step 6 — this CLI command is a thin
- * display wrapper over it.
- *
- * Until Step 6 is complete, this command prints an informative TBD and
- * suggests using `gh project` directly.
+ * Reads the project's board via the github-projects integration; groups items
+ * by column; prints a compact kanban.
  */
 
-import { spawn } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { CANONICAL_COLUMNS, findProject, listItems } from '../../integrations/github-projects.js'
+import { asProjectSlug } from '../../types/index.js'
+import { projectDir } from '../../orchestrator/state.js'
 import { hasFlag, parseArgs } from '../args.js'
 
-const HELP = `pnpm sdlc board — show GitHub Project board state
+const HELP = `pnpm sdlc board — render the GitHub Project board
 
 Usage:
   pnpm sdlc board --project <slug>
 
 Options:
+  --owner <handle>   GitHub owner (defaults to project config)
   --json             Output JSON
-
-(v1: thin wrapper over gh CLI. Full integration in Step 6.)
 `
 
 export async function runBoard(argv: readonly string[]): Promise<number> {
@@ -31,67 +30,84 @@ export async function runBoard(argv: readonly string[]): Promise<number> {
     return 0
   }
 
-  const slug = args.flags.project
-  if (typeof slug !== 'string') {
+  const slugRaw = args.flags.project
+  if (typeof slugRaw !== 'string') {
     process.stderr.write(`❌ Missing --project <slug>\n${HELP}`)
     return 2
   }
+  const slug = asProjectSlug(slugRaw)
 
-  // Check gh is available
-  const ghCheck = await spawnAndWait('gh', ['--version'])
-  if (ghCheck.exitCode !== 0) {
+  // Resolve owner from project config (or --owner override)
+  let owner = typeof args.flags.owner === 'string' ? args.flags.owner : undefined
+  if (!owner) {
+    const cfgPath = join(projectDir(slug), 'config.json')
+    if (existsSync(cfgPath)) {
+      try {
+        const raw = await readFile(cfgPath, 'utf8')
+        const cfg = JSON.parse(raw) as { owner?: string }
+        owner = cfg.owner
+      } catch {
+        // fall through
+      }
+    }
+  }
+  if (!owner) {
     process.stderr.write(
-      '❌ gh CLI not found. Install: https://cli.github.com\n   ai-sdlc reads GitHub Project boards via gh; required for this command.\n',
+      `❌ Cannot determine GitHub owner.\n   Either onboard the project (which sets owner) or pass --owner <handle>.\n`,
     )
     return 1
   }
 
-  // v1: print informative TBD + show how to inspect the board manually
-  process.stdout.write(`
-${slug} · GitHub Project board
+  const project = await findProject(owner, slug)
+  if (!project.ok) {
+    process.stderr.write(`❌ ${project.error.message}\n`)
+    if (project.error.fix) {
+      process.stderr.write(`   ${project.error.fix}\n`)
+    }
+    return 1
+  }
 
-Full integration ships in Step 6 (tools/sdlc/integrations/github-projects.ts).
-Until then, inspect the board directly:
+  const items = await listItems(project.value)
+  if (!items.ok) {
+    process.stderr.write(`❌ ${items.error.message}\n`)
+    return 1
+  }
 
-  # List all your project boards
-  gh project list --owner piyushgupta27
+  // Group items by column
+  const byColumn = new Map<string, typeof items.value>()
+  for (const col of CANONICAL_COLUMNS) {
+    byColumn.set(col, [])
+  }
+  for (const item of items.value) {
+    const col = item.column ?? 'Ready'
+    const bucket = byColumn.get(col) ?? []
+    byColumn.set(col, [...bucket, item])
+  }
 
-  # View one project's items (replace N with the project number)
-  gh project item-list N --owner piyushgupta27
+  if (hasFlag(args, 'json')) {
+    process.stdout.write(`${JSON.stringify(Object.fromEntries(byColumn), null, 2)}\n`)
+    return 0
+  }
 
-After Step 6, this command will render the kanban directly:
+  // Human-readable kanban
+  process.stdout.write(`\n${slug} · GitHub Project board (#${project.value.number})\n\n`)
 
-  Ready (3):           Building (1):       QA (1):           Review (1):
-    #142 ...             #143 ...            #140 ...          #139 ...
-  Done (today, 4):                          Blocked (1):
-    #136 ...                                  #135 (cap-exhausted)
-`)
+  for (const col of CANONICAL_COLUMNS) {
+    const bucket = byColumn.get(col) ?? []
+    if (bucket.length === 0 && col !== 'Ready' && col !== 'Blocked') continue
+    process.stdout.write(`${col} (${bucket.length})\n`)
+    for (const item of bucket.slice(0, 10)) {
+      const labelTier = item.content.labels?.find((l) => l.startsWith('tier:')) ?? ''
+      const tierTag = labelTier ? ` [${labelTier}]` : ''
+      process.stdout.write(
+        `  #${item.content.number}  ${item.title}${tierTag}\n`,
+      )
+    }
+    if (bucket.length > 10) {
+      process.stdout.write(`  ... and ${bucket.length - 10} more\n`)
+    }
+    process.stdout.write('\n')
+  }
 
   return 0
-}
-
-interface SpawnResult {
-  readonly stdout: string
-  readonly stderr: string
-  readonly exitCode: number
-}
-
-function spawnAndWait(cmd: string, args: readonly string[]): Promise<SpawnResult> {
-  return new Promise((resolve) => {
-    const child = spawn(cmd, [...args], { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8')
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8')
-    })
-    child.on('error', () => {
-      resolve({ stdout, stderr, exitCode: 127 })
-    })
-    child.on('close', (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? 1 })
-    })
-  })
 }
