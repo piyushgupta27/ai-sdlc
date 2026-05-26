@@ -56,7 +56,13 @@ export async function tryAsync<T>(
   } catch (cause) {
     const message =
       opts?.message ?? (cause instanceof Error ? cause.message : `Operation failed: ${code}`)
-    return err(makeError(code, message, { cause, fix: opts?.fix, docsUrl: opts?.docsUrl }))
+    return err(
+      makeError(code, message, {
+        cause,
+        ...(opts?.fix ? { fix: opts.fix } : {}),
+        ...(opts?.docsUrl ? { docsUrl: opts.docsUrl } : {}),
+      }),
+    )
   }
 }
 
@@ -73,7 +79,13 @@ export function trySync<T>(
   } catch (cause) {
     const message =
       opts?.message ?? (cause instanceof Error ? cause.message : `Operation failed: ${code}`)
-    return err(makeError(code, message, { cause, fix: opts?.fix, docsUrl: opts?.docsUrl }))
+    return err(
+      makeError(code, message, {
+        cause,
+        ...(opts?.fix ? { fix: opts.fix } : {}),
+        ...(opts?.docsUrl ? { docsUrl: opts.docsUrl } : {}),
+      }),
+    )
   }
 }
 

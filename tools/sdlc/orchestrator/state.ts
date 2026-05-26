@@ -58,9 +58,7 @@ export function initialState(slug: ProjectSlug): ProjectState {
   }
 }
 
-export async function readState(
-  slug: ProjectSlug,
-): Promise<Result<ProjectState | null, AppError>> {
+export async function readState(slug: ProjectSlug): Promise<Result<ProjectState | null, AppError>> {
   const path = statePath(slug)
   if (!existsSync(path)) return ok(null)
 

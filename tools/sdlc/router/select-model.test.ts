@@ -46,9 +46,7 @@ describe('selectModel', () => {
 
   it('TESTER picks Sonnet by default, Opus on retry', () => {
     expect(selectModel({ role: 'tester', tier: 3 }).model).toBe('claude-sonnet-4-6')
-    expect(selectModel({ role: 'tester', tier: 3, isRetry: true }).model).toBe(
-      'claude-opus-4-7',
-    )
+    expect(selectModel({ role: 'tester', tier: 3, isRetry: true }).model).toBe('claude-opus-4-7')
   })
 
   it('REVIEWER uses Opus + temp 0.7 for hostile-eye review', () => {
@@ -74,18 +72,17 @@ describe('selectModel', () => {
 
 describe('estimateCost', () => {
   it('returns 0 for unknown model', () => {
-    expect(
-      estimateCost('unknown-model-id', { input: 1000, output: 500 }),
-    ).toBe(0)
+    expect(estimateCost('unknown-model-id', { input: 1000, output: 500 })).toBe(0)
   })
 
   it('charges full input rate when no cache read', () => {
     const sonnet = 'claude-sonnet-4-6'
-    const pricing = MODEL_COST_PER_M_TOKENS[sonnet]!
-    expect(estimateCost(sonnet, { input: 1_000_000, output: 0 })).toBeCloseTo(
-      pricing.input,
-      5,
-    )
+    const pricing = MODEL_COST_PER_M_TOKENS[sonnet] as {
+      input: number
+      output: number
+      cache: number
+    }
+    expect(estimateCost(sonnet, { input: 1_000_000, output: 0 })).toBeCloseTo(pricing.input, 5)
   })
 
   it('charges cache rate for cached portion of input', () => {
@@ -95,7 +92,11 @@ describe('estimateCost', () => {
       output: 0,
       cacheRead: 1_000_000, // 100% cache hit
     })
-    const pricing = MODEL_COST_PER_M_TOKENS[sonnet]!
+    const pricing = MODEL_COST_PER_M_TOKENS[sonnet] as {
+      input: number
+      output: number
+      cache: number
+    }
     expect(cost).toBeCloseTo(pricing.cache, 5)
   })
 

@@ -53,11 +53,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { _: positional, flags }
 }
 
-export function requireFlag(
-  args: ParsedArgs,
-  name: string,
-  helpHint: string,
-): string {
+export function requireFlag(args: ParsedArgs, name: string, helpHint: string): string {
   const v = args.flags[name]
   if (typeof v !== 'string' || v.length === 0) {
     throw new Error(`Missing required flag: --${name}\n   ${helpHint}`)

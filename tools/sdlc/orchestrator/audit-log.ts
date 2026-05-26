@@ -27,14 +27,13 @@
  */
 
 import { createHash } from 'node:crypto'
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   type AppError,
   type AuditRow,
   GENESIS_PREV_HASH,
-  type ProjectSlug,
   type Result,
   err,
   makeError,
@@ -176,10 +175,11 @@ export async function writeAuditRow(
     // Append succeeded but tip update failed; the next call to writeAuditRow will
     // read a stale tip and the chain will fork. Surface this loudly.
     return err(
-      makeError('audit.tip-update-failed', `Audit row appended but chain tip update failed`, {
+      makeError('audit.tip-update-failed', 'Audit row appended but chain tip update failed', {
         cause: tipUpdateResult.error,
         fix: 'Run `pnpm sdlc audit rebuild-tip --project <slug>` to recover the chain tip from the JSONL files',
-        docsUrl: 'https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md#8-auditability--observability',
+        docsUrl:
+          'https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md#8-auditability--observability',
       }),
     )
   }
@@ -215,7 +215,8 @@ export async function readDailyRows(
     },
     {
       fix: 'Check that the audit file is not corrupted; restore from git history if needed',
-      docsUrl: 'https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md#8-auditability--observability',
+      docsUrl:
+        'https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md#8-auditability--observability',
     },
   )
 }

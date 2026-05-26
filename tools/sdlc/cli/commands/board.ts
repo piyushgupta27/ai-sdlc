@@ -31,7 +31,7 @@ export async function runBoard(argv: readonly string[]): Promise<number> {
     return 0
   }
 
-  const slug = args.flags['project']
+  const slug = args.flags.project
   if (typeof slug !== 'string') {
     process.stderr.write(`❌ Missing --project <slug>\n${HELP}`)
     return 2
@@ -41,7 +41,7 @@ export async function runBoard(argv: readonly string[]): Promise<number> {
   const ghCheck = await spawnAndWait('gh', ['--version'])
   if (ghCheck.exitCode !== 0) {
     process.stderr.write(
-      `❌ gh CLI not found. Install: https://cli.github.com\n   ai-sdlc reads GitHub Project boards via gh; required for this command.\n`,
+      '❌ gh CLI not found. Install: https://cli.github.com\n   ai-sdlc reads GitHub Project boards via gh; required for this command.\n',
     )
     return 1
   }

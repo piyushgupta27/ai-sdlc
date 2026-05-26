@@ -108,6 +108,8 @@ describe('file-ops', () => {
 
   describe('agentRead', () => {
     it('reads a file that exists', async () => {
+      const { mkdir: mk } = await import('node:fs/promises')
+      await mk(join(tmpRepo, 'src'), { recursive: true })
       await writeFile(join(tmpRepo, 'src/x.ts'), 'content\n', { flag: 'w' })
       const result = await agentRead({ path: 'src/x.ts', targetRepo: tmpRepo })
       expect(result.ok).toBe(true)

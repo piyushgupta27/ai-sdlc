@@ -13,6 +13,12 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  type DispatchResponse,
+  type SubagentTransport,
+  defaultTransport,
+} from '../router/claude-code-subagent.js'
+import { estimateCost, selectModel } from '../router/select-model.js'
+import {
   type AgentBrief,
   type AgentResult,
   type AppError,
@@ -24,12 +30,6 @@ import {
   makeError,
   ok,
 } from '../types/index.js'
-import { estimateCost, selectModel } from '../router/select-model.js'
-import {
-  type DispatchResponse,
-  type SubagentTransport,
-  defaultTransport,
-} from '../router/claude-code-subagent.js'
 
 /**
  * Prompts directory — co-located with agents/ for easy editing.
@@ -86,14 +86,10 @@ export async function runAgent<TPayload, TOutput>(
     systemPrompt = await readFile(promptPath, 'utf8')
   } catch (cause) {
     return err(
-      makeError(
-        'agent.prompt-missing',
-        `Cannot load prompt for ${opts.role} at ${promptPath}`,
-        {
-          cause,
-          fix: `Ensure tools/sdlc/prompts/${opts.role}/v1.md exists`,
-        },
-      ),
+      makeError('agent.prompt-missing', `Cannot load prompt for ${opts.role} at ${promptPath}`, {
+        cause,
+        fix: `Ensure tools/sdlc/prompts/${opts.role}/v1.md exists`,
+      }),
     )
   }
 
@@ -167,9 +163,7 @@ function buildUserMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayloa
   ].join('\n')
 }
 
-function parseEnvelope<TOutput>(
-  rawText: string,
-): Result<AgentEnvelope<TOutput>, AppError> {
+function parseEnvelope<TOutput>(rawText: string): Result<AgentEnvelope<TOutput>, AppError> {
   // Strip markdown fences if present (some agents may add them despite instructions)
   const cleaned = rawText
     .replace(/^```(?:json)?\s*\n?/i, '')
@@ -198,14 +192,10 @@ function parseEnvelope<TOutput>(
     return ok(parsed)
   } catch (cause) {
     return err(
-      makeError(
-        'agent.invalid-response',
-        'Agent response was not valid JSON',
-        {
-          cause: { rawText: rawText.slice(0, 500), parseError: (cause as Error).message },
-          fix: 'Inspect raw response; consider tightening prompt to forbid prose',
-        },
-      ),
+      makeError('agent.invalid-response', 'Agent response was not valid JSON', {
+        cause: { rawText: rawText.slice(0, 500), parseError: (cause as Error).message },
+        fix: 'Inspect raw response; consider tightening prompt to forbid prose',
+      }),
     )
   }
 }

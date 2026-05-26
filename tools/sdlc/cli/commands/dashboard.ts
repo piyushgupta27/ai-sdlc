@@ -36,7 +36,9 @@ export async function runDashboard(argv: readonly string[]): Promise<number> {
   const host = getFlag(args, 'host') ?? '127.0.0.1'
 
   if (host !== '127.0.0.1' && host !== 'localhost') {
-    process.stderr.write(`⚠️ Binding to ${host} — the dashboard has no auth. Use only on trusted networks.\n`)
+    process.stderr.write(
+      `⚠️ Binding to ${host} — the dashboard has no auth. Use only on trusted networks.\n`,
+    )
   }
 
   const server = startServer({ port, host })

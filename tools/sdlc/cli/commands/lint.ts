@@ -43,7 +43,7 @@ export async function runLint(argv: readonly string[]): Promise<number> {
     return 0
   }
 
-  const slug = args.flags['project']
+  const slug = args.flags.project
   if (typeof slug !== 'string') {
     process.stderr.write(`❌ Missing --project <slug>\n${HELP}`)
     return 2

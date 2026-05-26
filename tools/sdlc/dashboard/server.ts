@@ -21,22 +21,18 @@
 
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { join } from 'node:path'
-import { type HITLResponse, isOk, asProjectSlug } from '../types/index.js'
-import {
-  checkResponse,
-  listPending,
-  recordResponse,
-} from '../orchestrator/hitl-queue.js'
+import { checkResponse, listPending, recordResponse } from '../orchestrator/hitl-queue.js'
 import { listProjects, projectDir, readState } from '../orchestrator/state.js'
+import { type HITLResponse, asProjectSlug } from '../types/index.js'
 import {
+  STYLES_CSS,
+  renderError,
+  renderGateDetail,
   renderHome,
   renderProjectDetail,
   renderQueue,
-  renderGateDetail,
-  renderError,
-  STYLES_CSS,
 } from './views.js'
 
 const PORT = 3001
@@ -132,7 +128,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
 async function handleHome(res: ServerResponse): Promise<void> {
   const projects = await listProjects()
-  if (!isOk(projects)) {
+  if (!projects.ok) {
     res.statusCode = 500
     res.end(renderError('Failed to list projects', projects.error.message))
     return
@@ -141,12 +137,12 @@ async function handleHome(res: ServerResponse): Promise<void> {
   const rows: ProjectRow[] = []
   for (const slug of projects.value) {
     const state = await readState(slug)
-    if (!isOk(state) || state.value === null) continue
+    if (!state.ok || state.value === null) continue
     const repoPath = await readRepoPath(slug)
     let pendingCount = 0
     if (repoPath && existsSync(repoPath)) {
       const pending = await listPending(repoPath)
-      if (isOk(pending)) pendingCount = pending.value.length
+      if (pending.ok) pendingCount = pending.value.length
     }
     rows.push({
       slug,
@@ -165,7 +161,7 @@ async function handleHome(res: ServerResponse): Promise<void> {
 async function handleProjectDetail(res: ServerResponse, slug: string): Promise<void> {
   const projectSlug = asProjectSlug(slug)
   const state = await readState(projectSlug)
-  if (!isOk(state)) {
+  if (!state.ok) {
     res.statusCode = 500
     res.end(renderError('Failed to read state', state.error.message))
     return
@@ -180,17 +176,23 @@ async function handleProjectDetail(res: ServerResponse, slug: string): Promise<v
   let pending: import('../types/index.js').HITLRequest[] = []
   if (repoPath && existsSync(repoPath)) {
     const result = await listPending(repoPath)
-    if (isOk(result)) pending = [...result.value]
+    if (result.ok) pending = [...result.value]
   }
 
   res.statusCode = 200
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
-  res.end(renderProjectDetail({ state: state.value, repoPath: repoPath ?? '(unknown)', pendingGates: pending }))
+  res.end(
+    renderProjectDetail({
+      state: state.value,
+      repoPath: repoPath ?? '(unknown)',
+      pendingGates: pending,
+    }),
+  )
 }
 
 async function handleQueue(res: ServerResponse): Promise<void> {
   const projects = await listProjects()
-  if (!isOk(projects)) {
+  if (!projects.ok) {
     res.statusCode = 500
     res.end(renderError('Failed to list projects', projects.error.message))
     return
@@ -201,7 +203,7 @@ async function handleQueue(res: ServerResponse): Promise<void> {
     const repoPath = await readRepoPath(slug)
     if (!repoPath || !existsSync(repoPath)) continue
     const pending = await listPending(repoPath)
-    if (!isOk(pending)) continue
+    if (!pending.ok) continue
     for (const gate of pending.value) {
       allGates.push({ project: slug, gate })
     }
@@ -215,7 +217,7 @@ async function handleQueue(res: ServerResponse): Promise<void> {
 async function handleGateDetail(res: ServerResponse, gateId: string): Promise<void> {
   // Find which project owns this gate (linear scan; v1 scale)
   const projects = await listProjects()
-  if (!isOk(projects)) {
+  if (!projects.ok) {
     res.statusCode = 500
     res.end(renderError('Failed to list projects', projects.error.message))
     return
@@ -225,11 +227,11 @@ async function handleGateDetail(res: ServerResponse, gateId: string): Promise<vo
     const repoPath = await readRepoPath(slug)
     if (!repoPath || !existsSync(repoPath)) continue
     const pending = await listPending(repoPath)
-    if (!isOk(pending)) continue
+    if (!pending.ok) continue
     const gate = pending.value.find((g) => g.id === gateId)
     if (gate) {
       const response = await checkResponse(repoPath, gateId)
-      const existingResponse = isOk(response) ? response.value : null
+      const existingResponse = response.ok ? response.value : null
       res.statusCode = 200
       res.setHeader('Content-Type', 'text/html; charset=utf-8')
       res.end(renderGateDetail({ project: slug, gate, existingResponse }))
@@ -262,7 +264,7 @@ async function handleGateResponse(
 
   // Find the gate's project (same scan as handleGateDetail)
   const projects = await listProjects()
-  if (!isOk(projects)) {
+  if (!projects.ok) {
     res.statusCode = 500
     res.end(renderError('Failed to list projects', projects.error.message))
     return
@@ -272,7 +274,7 @@ async function handleGateResponse(
     const repoPath = await readRepoPath(slug)
     if (!repoPath || !existsSync(repoPath)) continue
     const pending = await listPending(repoPath)
-    if (!isOk(pending)) continue
+    if (!pending.ok) continue
     if (!pending.value.find((g) => g.id === gateId)) continue
 
     const response: HITLResponse = {
@@ -283,7 +285,7 @@ async function handleGateResponse(
       ...(approvalToken ? { approvalToken } : {}),
     }
     const writeResult = await recordResponse(repoPath, response)
-    if (!isOk(writeResult)) {
+    if (!writeResult.ok) {
       res.statusCode = 500
       res.end(renderError('Failed to record response', writeResult.error.message))
       return

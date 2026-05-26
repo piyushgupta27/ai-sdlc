@@ -22,9 +22,9 @@
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { asProjectSlug, type ProjectConfig } from '../../types/index.js'
 import { initialState, projectDir, writeState } from '../../orchestrator/state.js'
-import { type ParsedArgs, getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
+import { type ProjectConfig, asProjectSlug } from '../../types/index.js'
+import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 
 const HELP = `pnpm sdlc onboard — add a new project as an ai-sdlc testbed
 
@@ -69,7 +69,9 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
   const dryRun = hasFlag(args, 'dry-run')
 
   if (!['node', 'python', 'go', 'rust', 'unknown'].includes(runtime)) {
-    process.stderr.write(`❌ Invalid --runtime: ${runtime}\n   Allowed: node, python, go, rust, unknown\n`)
+    process.stderr.write(
+      `❌ Invalid --runtime: ${runtime}\n   Allowed: node, python, go, rust, unknown\n`,
+    )
     return 2
   }
   if (!['public', 'private'].includes(visibility)) {
@@ -79,7 +81,9 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
 
   // 1. Verify repo exists + is a git repo
   if (!existsSync(repo)) {
-    process.stderr.write(`❌ Repo path not found: ${repo}\n   Create the repo first, then re-run onboard.\n`)
+    process.stderr.write(
+      `❌ Repo path not found: ${repo}\n   Create the repo first, then re-run onboard.\n`,
+    )
     return 1
   }
   if (!existsSync(join(repo, '.git'))) {
@@ -104,7 +108,7 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(config, null, 2)}\n\n`)
     process.stdout.write(`Would write initial state to projects/${slug}/state.json.\n`)
     process.stdout.write(`Would create skeleton CLAUDE.md if not present in ${repo}.\n`)
-    process.stdout.write(`\n(Dry run — no changes made.)\n`)
+    process.stdout.write('\n(Dry run — no changes made.)\n')
     return 0
   }
 
@@ -193,5 +197,3 @@ wrapper invokes the hook before every agent write.
 <Edit this — subtle gotchas, "if you change X you must also touch Y", legacy decisions worth knowing.>
 `
 }
-
-void ParsedArgs // unused-export guard for biome (keep type re-export sane)

@@ -18,8 +18,6 @@ import {
   type HITLRequest,
   type HITLResponse,
   type Result,
-  err,
-  makeError,
   ok,
   tryAsync,
 } from '../types/index.js'
@@ -136,10 +134,7 @@ export async function recordResponse(
  * audit-logged). Called by the orchestrator on retry after seeing the
  * user's response.
  */
-export async function dequeue(
-  targetRepo: string,
-  gateId: string,
-): Promise<Result<void, AppError>> {
+export async function dequeue(targetRepo: string, gateId: string): Promise<Result<void, AppError>> {
   const reqPath = queuePath(targetRepo, gateId)
   const respPath = responsePath(targetRepo, gateId)
 

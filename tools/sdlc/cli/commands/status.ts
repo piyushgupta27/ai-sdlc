@@ -4,14 +4,13 @@
  * Prints a human-readable snapshot. With --json, dumps state.json directly.
  */
 
-import { asProjectSlug, isErr } from '../../types/index.js'
-import { listProjects, readState } from '../../orchestrator/state.js'
-import { listPending } from '../../orchestrator/hitl-queue.js'
-import { readState as readProjectConfig } from '../../orchestrator/state.js'
-import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { hasFlag, parseArgs, requireFlag } from '../args.js'
+import { listPending } from '../../orchestrator/hitl-queue.js'
+import { listProjects, readState } from '../../orchestrator/state.js'
+import { asProjectSlug } from '../../types/index.js'
+import { hasFlag, parseArgs } from '../args.js'
 
 const HELP = `pnpm sdlc status — show project state
 
@@ -31,12 +30,12 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
   }
 
   const json = hasFlag(args, 'json')
-  const slugFlag = args.flags['project']
+  const slugFlag = args.flags.project
 
   if (typeof slugFlag !== 'string') {
     // List all projects
     const projects = await listProjects()
-    if (isErr(projects)) {
+    if (!projects.ok) {
       process.stderr.write(`❌ ${projects.error.message}\n`)
       return 1
     }
@@ -53,19 +52,21 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
         )
       }
     }
-    process.stdout.write(`\nFor detail: pnpm sdlc status --project <slug>\n`)
+    process.stdout.write('\nFor detail: pnpm sdlc status --project <slug>\n')
     return 0
   }
 
   // Single project
   const slug = asProjectSlug(slugFlag)
   const state = await readState(slug)
-  if (isErr(state)) {
+  if (!state.ok) {
     process.stderr.write(`❌ ${state.error.message}\n`)
     return 1
   }
   if (state.value === null) {
-    process.stderr.write(`❌ Project ${slug} is not onboarded.\n   Run: pnpm sdlc onboard --slug ${slug} --repo <path>\n`)
+    process.stderr.write(
+      `❌ Project ${slug} is not onboarded.\n   Run: pnpm sdlc onboard --slug ${slug} --repo <path>\n`,
+    )
     return 1
   }
 
@@ -77,7 +78,7 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
   // Load config for repoPath (needed to read HITL queue)
   const cfgPath = join(process.cwd(), 'projects', slug, 'config.json')
   if (!existsSync(cfgPath)) {
-    process.stderr.write(`(No config.json — onboarding may be incomplete)\n`)
+    process.stderr.write('(No config.json — onboarding may be incomplete)\n')
   }
   let repoPath: string | undefined
   try {
@@ -114,6 +115,3 @@ Project: ${slug}
   process.stdout.write('\n')
   return 0
 }
-
-// Re-export to silence unused-export warning
-void readProjectConfig

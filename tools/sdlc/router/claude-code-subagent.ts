@@ -10,14 +10,7 @@
 
 import { spawn } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
-import {
-  type AppError,
-  type ModelId,
-  type Result,
-  err,
-  makeError,
-  ok,
-} from '../types/index.js'
+import { type AppError, type ModelId, type Result, err, makeError, ok } from '../types/index.js'
 
 /**
  * Inputs to a single subagent dispatch.
@@ -153,14 +146,10 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         if (timedOut) {
           resolve(
             err(
-              makeError(
-                'subagent.timeout',
-                `Claude subagent exceeded ${timeoutSec}s timeout`,
-                {
-                  cause: { stdout, stderr },
-                  fix: 'Increase timeoutSec for complex tasks, or simplify the brief',
-                },
-              ),
+              makeError('subagent.timeout', `Claude subagent exceeded ${timeoutSec}s timeout`, {
+                cause: { stdout, stderr },
+                fix: 'Increase timeoutSec for complex tasks, or simplify the brief',
+              }),
             ),
           )
           return
@@ -169,14 +158,10 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         if (exitCode !== 0) {
           resolve(
             err(
-              makeError(
-                'subagent.non-zero-exit',
-                `claude CLI exited with code ${exitCode}`,
-                {
-                  cause: { exitCode, stderr: stderr.slice(0, 2000) },
-                  fix: 'Inspect stderr; common causes: rate-limited, invalid model id, auth expired',
-                },
-              ),
+              makeError('subagent.non-zero-exit', `claude CLI exited with code ${exitCode}`, {
+                cause: { exitCode, stderr: stderr.slice(0, 2000) },
+                fix: 'Inspect stderr; common causes: rate-limited, invalid model id, auth expired',
+              }),
             ),
           )
           return
