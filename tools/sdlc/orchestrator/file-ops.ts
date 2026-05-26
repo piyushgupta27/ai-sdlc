@@ -10,17 +10,10 @@
  * arch rule that bans `node:fs` imports outside this file).
  */
 
+import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
-import { spawn } from 'node:child_process'
-import {
-  type AppError,
-  type Result,
-  err,
-  makeError,
-  ok,
-  tryAsync,
-} from '../types/index.js'
+import { type AppError, type Result, err, makeError, ok, tryAsync } from '../types/index.js'
 
 /**
  * Options for an agent file write.
@@ -58,13 +51,9 @@ export async function agentWrite(opts: AgentWriteOpts): Promise<Result<void, App
   // Disallow writes outside the target repo
   if (relPath.startsWith('..')) {
     return err(
-      makeError(
-        'file-ops.path-escape',
-        `Refusing to write outside target repo: ${absPath}`,
-        {
-          fix: `All paths must be inside ${opts.targetRepo}`,
-        },
-      ),
+      makeError('file-ops.path-escape', `Refusing to write outside target repo: ${absPath}`, {
+        fix: `All paths must be inside ${opts.targetRepo}`,
+      }),
     )
   }
 
@@ -72,7 +61,7 @@ export async function agentWrite(opts: AgentWriteOpts): Promise<Result<void, App
   const hookResult = await runBlastRadiusHook({
     relPath,
     targetRepo: opts.targetRepo,
-    blastRadiusApproved: opts.blastRadiusApproved,
+    ...(opts.blastRadiusApproved ? { blastRadiusApproved: opts.blastRadiusApproved } : {}),
     agent: opts.agent,
     taskId: opts.taskId,
   })
@@ -141,14 +130,10 @@ async function runBlastRadiusHook(opts: {
     child.on('error', (cause) => {
       resolve(
         err(
-          makeError(
-            'file-ops.hook-spawn-failed',
-            `Could not invoke ${hookPath}`,
-            {
-              cause,
-              fix: 'Verify check-blast-radius.sh exists + is executable in the target repo',
-            },
-          ),
+          makeError('file-ops.hook-spawn-failed', `Could not invoke ${hookPath}`, {
+            cause,
+            fix: 'Verify check-blast-radius.sh exists + is executable in the target repo',
+          }),
         ),
       )
     })
@@ -167,7 +152,8 @@ async function runBlastRadiusHook(opts: {
             {
               cause: { exitCode, stderr },
               fix: 'Either (a) revise to avoid Red zone files, or (b) obtain HITL approval token and pass via blastRadiusApproved',
-              docsUrl: 'https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md#7-guardrails--three-layer-enforcement',
+              docsUrl:
+                'https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md#7-guardrails--three-layer-enforcement',
             },
           ),
         ),

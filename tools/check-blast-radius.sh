@@ -130,18 +130,20 @@ while IFS= read -r pattern; do
   # Skip blank lines
   [ -z "${pattern// /}" ] && continue
 
-  # Normalize: strip trailing whitespace
+  # Normalize: strip trailing whitespace + trailing slash (dir patterns like `private/`
+  # would otherwise glob-fail against files inside the dir like `private/cookies.json`)
   pattern="${pattern%% *}"
+  pattern="${pattern%/}"
 
   case "$FILE_PATH" in
     $pattern | $pattern/*)
-      MATCHED_PATTERN="$pattern"
-      # Determine tier
-      if echo "$RED_ZONE_TIER0" | grep -qFx -- "$pattern"; then
+      # Determine tier — check the ORIGINAL pattern list, which still has the trailing slash if present
+      if echo "$RED_ZONE_TIER0" | grep -qE "^${pattern}/?$"; then
         MATCHED_TIER=0
       else
         MATCHED_TIER=1
       fi
+      MATCHED_PATTERN="$pattern"
       break
       ;;
   esac

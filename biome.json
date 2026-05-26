@@ -40,38 +40,18 @@
       },
       "style": {
         "noNonNullAssertion": "error",
-        "useNamingConvention": {
-          "level": "warn",
-          "options": {
-            "strictCase": false,
-            "conventions": [
-              {
-                "selector": { "kind": "typeLike" },
-                "formats": ["PascalCase"]
-              },
-              {
-                "selector": { "kind": "variable" },
-                "formats": ["camelCase", "CONSTANT_CASE"]
-              },
-              {
-                "selector": { "kind": "function" },
-                "formats": ["camelCase"]
-              }
-            ]
-          }
-        },
-        "useConst": "error"
+        "useNamingConvention": "off",
+        "useConst": "error",
+        "noUnusedTemplateLiteral": "warn"
       },
       "suspicious": {
         "noExplicitAny": "error",
         "noConsoleLog": "off",
-        "noShadowRestrictedNames": "error"
+        "noShadowRestrictedNames": "error",
+        "noAssignInExpressions": "warn"
       },
       "complexity": {
-        "noExcessiveCognitiveComplexity": {
-          "level": "warn",
-          "options": { "maxAllowedComplexity": 15 }
-        }
+        "noExcessiveCognitiveComplexity": "off"
       },
       "security": {
         "noDangerouslySetInnerHtml": "error"

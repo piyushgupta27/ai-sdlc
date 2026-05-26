@@ -16,9 +16,9 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { asProjectSlug, isErr, type Task } from '../../types/index.js'
 import { runTask } from '../../orchestrator/index.js'
 import { readState } from '../../orchestrator/state.js'
+import { type Task, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 
 const HELP = `pnpm sdlc dispatch — run the orchestrator on a project
@@ -62,7 +62,7 @@ export async function runDispatch(argv: readonly string[]): Promise<number> {
 
   // Verify project is onboarded
   const state = await readState(slug)
-  if (isErr(state)) {
+  if (!state.ok) {
     process.stderr.write(`❌ ${state.error.message}\n`)
     return 1
   }
@@ -149,7 +149,7 @@ async function dispatchManualSpec(
     branch: `feature/${task.id}`,
   })
 
-  if (isErr(result)) {
+  if (!result.ok) {
     process.stderr.write(`❌ Dispatch failed: ${result.error.code} — ${result.error.message}\n`)
     if (result.error.fix) {
       process.stderr.write(`   Fix: ${result.error.fix}\n`)

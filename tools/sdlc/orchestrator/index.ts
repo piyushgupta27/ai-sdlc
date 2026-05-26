@@ -115,7 +115,14 @@ export async function runTask(opts: {
     )
 
     if (!buildResult.ok) {
-      return await finalizeFailure(opts, buildResult.error, auditRunIds, totalCost, start, retriesUsed)
+      return await finalizeFailure(
+        opts,
+        buildResult.error,
+        auditRunIds,
+        totalCost,
+        start,
+        retriesUsed,
+      )
     }
 
     totalCost += buildResult.value.costUsd
@@ -124,7 +131,15 @@ export async function runTask(opts: {
 
     if (buildResult.value.outcome === 'escalated') {
       // BUILDER hit Red zone or needs ADR — escalate via G2
-      return await escalate(opts, buildResult.value, 'BUILD escalated', auditRunIds, totalCost, start, retriesUsed)
+      return await escalate(
+        opts,
+        buildResult.value,
+        'BUILD escalated',
+        auditRunIds,
+        totalCost,
+        start,
+        retriesUsed,
+      )
     }
 
     if (buildResult.value.outcome !== 'success') {
@@ -134,22 +149,37 @@ export async function runTask(opts: {
     }
 
     // 2) TEST
-    const buildOutput = buildResult.value.output as { commitSha: string; diffPath: string; linesAdded: number; linesRemoved: number }
+    const buildOutput = buildResult.value.output as {
+      commitSha: string
+      diffPath: string
+      linesAdded: number
+      linesRemoved: number
+    }
 
-    const testResult = await runTester({
-      project: opts.project,
-      taskId: opts.task.id,
-      targetRepo: opts.targetRepo,
-      payload: {
+    const testResult = await runTester(
+      {
+        project: opts.project,
         taskId: opts.task.id,
-        commitSha: buildOutput.commitSha,
-        acceptanceCriteria: opts.task.dod.acceptanceCriteria,
-        coverageFloor: opts.task.dod.coverageFloor,
+        targetRepo: opts.targetRepo,
+        payload: {
+          taskId: opts.task.id,
+          commitSha: buildOutput.commitSha,
+          acceptanceCriteria: opts.task.dod.acceptanceCriteria,
+          coverageFloor: opts.task.dod.coverageFloor,
+        },
       },
-    }, { tier, isRetry })
+      { tier, isRetry },
+    )
 
     if (!testResult.ok) {
-      return await finalizeFailure(opts, testResult.error, auditRunIds, totalCost, start, retriesUsed)
+      return await finalizeFailure(
+        opts,
+        testResult.error,
+        auditRunIds,
+        totalCost,
+        start,
+        retriesUsed,
+      )
     }
 
     totalCost += testResult.value.costUsd
@@ -178,14 +208,30 @@ export async function runTask(opts: {
     })
 
     if (!reviewResult.ok) {
-      return await finalizeFailure(opts, reviewResult.error, auditRunIds, totalCost, start, retriesUsed)
+      return await finalizeFailure(
+        opts,
+        reviewResult.error,
+        auditRunIds,
+        totalCost,
+        start,
+        retriesUsed,
+      )
     }
 
     totalCost += reviewResult.value.costUsd
-    const reviewAuditId = await writeStageAudit(opts, 'REVIEW', reviewResult.value, tier, retriesUsed)
+    const reviewAuditId = await writeStageAudit(
+      opts,
+      'REVIEW',
+      reviewResult.value,
+      tier,
+      retriesUsed,
+    )
     if (reviewAuditId) auditRunIds.push(reviewAuditId)
 
-    const reviewOutput = reviewResult.value.output as { verdict: 'PASS' | 'CHANGES_REQUESTED' | 'FAIL' | 'BLOCK'; confidence: number }
+    const reviewOutput = reviewResult.value.output as {
+      verdict: 'PASS' | 'CHANGES_REQUESTED' | 'FAIL' | 'BLOCK'
+      confidence: number
+    }
 
     // 4) Retry policy decision
     const decision = shouldRetry(reviewOutput.verdict, retriesUsed, tier)
@@ -201,13 +247,19 @@ export async function runTask(opts: {
     }
 
     // action === 'block' — write G2 HITL request, return hitl-pending
-    return await escalateToG2(opts, reviewOutput, decision, auditRunIds, totalCost, start, retriesUsed)
+    return await escalateToG2(
+      opts,
+      reviewOutput,
+      decision,
+      auditRunIds,
+      totalCost,
+      start,
+      retriesUsed,
+    )
   }
 
   // Defensive — shouldn't reach here since the loop exits via return
-  return err(
-    makeError('orchestrator.unreachable', 'Iteration loop exited without verdict', {}),
-  )
+  return err(makeError('orchestrator.unreachable', 'Iteration loop exited without verdict', {}))
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────

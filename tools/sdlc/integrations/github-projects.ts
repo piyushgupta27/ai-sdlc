@@ -16,13 +16,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import {
-  type AppError,
-  type Result,
-  err,
-  makeError,
-  ok,
-} from '../types/index.js'
+import { type AppError, type Result, err, makeError, ok } from '../types/index.js'
 
 /**
  * Canonical column names ai-sdlc uses on every project board.
@@ -103,8 +97,8 @@ export async function findProject(
     )
   }
 
-  const match = listJson.projects?.find(
-    (p) => p.title.toLowerCase().includes(slugOrTitleContains.toLowerCase()),
+  const match = listJson.projects?.find((p) =>
+    p.title.toLowerCase().includes(slugOrTitleContains.toLowerCase()),
   )
   if (!match) {
     return err(
@@ -130,7 +124,9 @@ export async function findProject(
   ])
   if (!fieldsResult.ok) return fieldsResult
 
-  let fieldsJson: { fields?: Array<{ id: string; name: string; options?: Array<{ id: string; name: string }> }> }
+  let fieldsJson: {
+    fields?: Array<{ id: string; name: string; options?: Array<{ id: string; name: string }> }>
+  }
   try {
     fieldsJson = JSON.parse(fieldsResult.value.stdout)
   } catch (cause) {
@@ -198,23 +194,27 @@ export async function listItems(
   }
 
   const items: ProjectItem[] = (json.items ?? []).map((raw) => {
-    const content = (raw['content'] as Record<string, unknown> | undefined) ?? {}
-    const status = raw['status'] as string | undefined
+    const content = (raw.content as Record<string, unknown> | undefined) ?? {}
+    const status = raw.status as string | undefined
+    const url = typeof content.url === 'string' ? content.url : undefined
+    const body = typeof content.body === 'string' ? content.body : undefined
+    const labels = Array.isArray(content.labels)
+      ? (content.labels as Array<{ name?: string } | string>).map((l) =>
+          typeof l === 'string' ? l : (l.name ?? ''),
+        )
+      : undefined
+
     return {
-      id: String(raw['id'] ?? ''),
-      title: String(raw['title'] ?? content['title'] ?? '(untitled)'),
+      id: String(raw.id ?? ''),
+      title: String(raw.title ?? content.title ?? '(untitled)'),
       content: {
-        type: (content['type'] as 'Issue' | 'PullRequest' | 'DraftIssue') ?? 'DraftIssue',
-        number: Number(content['number'] ?? 0),
-        url: typeof content['url'] === 'string' ? content['url'] : undefined,
-        body: typeof content['body'] === 'string' ? content['body'] : undefined,
-        labels: Array.isArray(content['labels'])
-          ? (content['labels'] as Array<{ name?: string } | string>).map((l) =>
-              typeof l === 'string' ? l : (l.name ?? ''),
-            )
-          : undefined,
+        type: (content.type as 'Issue' | 'PullRequest' | 'DraftIssue') ?? 'DraftIssue',
+        number: Number(content.number ?? 0),
+        ...(url !== undefined ? { url } : {}),
+        ...(body !== undefined ? { body } : {}),
+        ...(labels !== undefined ? { labels } : {}),
       },
-      column: status,
+      ...(status !== undefined ? { column: status } : {}),
     }
   })
 
@@ -238,13 +238,9 @@ export async function moveItem(
   const option = meta.statusField.options.find((o) => o.name === toColumn)
   if (!option) {
     return err(
-      makeError(
-        'gh-projects.column-not-found',
-        `Project board has no column named "${toColumn}"`,
-        {
-          fix: `Add the column via gh CLI or web UI; canonical names: ${CANONICAL_COLUMNS.join(', ')}`,
-        },
-      ),
+      makeError('gh-projects.column-not-found', `Project board has no column named "${toColumn}"`, {
+        fix: `Add the column via gh CLI or web UI; canonical names: ${CANONICAL_COLUMNS.join(', ')}`,
+      }),
     )
   }
 
@@ -322,14 +318,10 @@ async function runGh(args: readonly string[]): Promise<Result<RunResult, AppErro
       }
       resolve(
         err(
-          makeError(
-            'gh-projects.non-zero-exit',
-            `gh CLI exited with code ${exitCode}`,
-            {
-              cause: { exitCode, stderr: stderr.slice(0, 2000) },
-              fix: 'Inspect stderr; common: not authenticated, project not found, label not found',
-            },
-          ),
+          makeError('gh-projects.non-zero-exit', `gh CLI exited with code ${exitCode}`, {
+            cause: { exitCode, stderr: stderr.slice(0, 2000) },
+            fix: 'Inspect stderr; common: not authenticated, project not found, label not found',
+          }),
         ),
       )
     })

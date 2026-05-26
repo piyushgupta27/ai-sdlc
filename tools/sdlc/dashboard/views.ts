@@ -139,9 +139,7 @@ export function renderProjectDetail(opts: {
   )
 }
 
-export function renderQueue(
-  items: ReadonlyArray<{ project: string; gate: HITLRequest }>,
-): string {
+export function renderQueue(items: ReadonlyArray<{ project: string; gate: HITLRequest }>): string {
   const rowsHtml =
     items.length === 0
       ? '<p class="muted">Queue empty. All clear.</p>'
@@ -206,11 +204,15 @@ export function renderGateDetail(opts: {
           <legend>Comment (optional)</legend>
           <textarea name="comment" rows="4" cols="60" placeholder="Feedback sent to BUILDER on retry; visible in audit"></textarea>
         </fieldset>
-        ${g.tier <= 1 ? `<fieldset>
+        ${
+          g.tier <= 1
+            ? `<fieldset>
           <legend>Approval token (Tier ${g.tier} Red zone)</legend>
           <input type="text" name="approvalToken" placeholder="${esc(g.id)}" value="${esc(g.id)}" size="40">
           <p class="muted">Hook will verify this against the HITL record.</p>
-        </fieldset>` : ''}
+        </fieldset>`
+            : ''
+        }
         <button type="submit">Submit</button>
       </form>`
 

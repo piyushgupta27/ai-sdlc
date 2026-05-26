@@ -13,9 +13,9 @@
  *   REPORTER  → haiku 4.5 (formulaic)
  */
 
+import type { V1AgentRole } from '../types/agent.js'
 import type { ModelId, ModelTransport } from '../types/audit.js'
 import type { Tier } from '../types/task.js'
-import type { V1AgentRole } from '../types/agent.js'
 
 /**
  * Routing decision returned by the router. Deterministic; logged in audit.

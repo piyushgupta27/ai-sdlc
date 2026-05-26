@@ -11,12 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { asProjectSlug } from '../types/index.js'
-import {
-  readDailyRows,
-  rebuildChainTip,
-  verifyDailyChain,
-  writeAuditRow,
-} from './audit-log.js'
+import { readDailyRows, rebuildChainTip, verifyDailyChain, writeAuditRow } from './audit-log.js'
 
 function makePartialRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -99,8 +94,14 @@ describe('audit-log', () => {
 
     it('returns rows in write order', async () => {
       await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.1' }))
-      await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }))
-      await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.3', ts: '2026-05-23T12:02:00.000Z' }))
+      await writeAuditRow(
+        tmpRepo,
+        makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }),
+      )
+      await writeAuditRow(
+        tmpRepo,
+        makePartialRow({ taskId: '1.1.3', ts: '2026-05-23T12:02:00.000Z' }),
+      )
 
       const result = await readDailyRows(tmpRepo, '2026-05-23')
       expect(result.ok).toBe(true)
@@ -113,7 +114,10 @@ describe('audit-log', () => {
   describe('verifyDailyChain', () => {
     it('returns intact=true for a freshly written chain', async () => {
       await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.1' }))
-      await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }))
+      await writeAuditRow(
+        tmpRepo,
+        makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }),
+      )
 
       const result = await verifyDailyChain(tmpRepo, '2026-05-23')
       expect(result.ok).toBe(true)
@@ -125,7 +129,10 @@ describe('audit-log', () => {
 
     it('detects a tampered row by hash mismatch', async () => {
       await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.1' }))
-      await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }))
+      await writeAuditRow(
+        tmpRepo,
+        makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }),
+      )
 
       // Tamper: overwrite the audit file with modified content
       const { readFile, writeFile } = await import('node:fs/promises')
@@ -152,7 +159,10 @@ describe('audit-log', () => {
       const { readFile, writeFile } = await import('node:fs/promises')
       const path = join(tmpRepo, '.audit/2026-05-23/audit.jsonl')
 
-      await writeAuditRow(tmpRepo, makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }))
+      await writeAuditRow(
+        tmpRepo,
+        makePartialRow({ taskId: '1.1.2', ts: '2026-05-23T12:01:00.000Z' }),
+      )
       const raw = await readFile(path, 'utf8')
       const lines = raw.split('\n').filter((l) => l.length > 0)
       // Surgery on line 2: replace prevRowHash but recompute its own rowHash so only the prev link breaks

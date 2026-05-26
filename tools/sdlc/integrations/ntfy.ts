@@ -14,13 +14,7 @@
  * baseUrl changes, no code change.
  */
 
-import {
-  type AppError,
-  type Result,
-  err,
-  makeError,
-  ok,
-} from '../types/index.js'
+import { type AppError, type Result, err, makeError, ok } from '../types/index.js'
 
 const DEFAULT_BASE_URL = 'https://ntfy.sh'
 
@@ -60,10 +54,10 @@ export async function notify(
     'Content-Type': 'text/plain; charset=utf-8',
     Title: opts.title,
   }
-  if (opts.priority) headers['Priority'] = String(opts.priority)
-  if (opts.clickUrl) headers['Click'] = opts.clickUrl
-  if (opts.tags && opts.tags.length > 0) headers['Tags'] = opts.tags.join(',')
-  if (config.token) headers['Authorization'] = `Bearer ${config.token}`
+  if (opts.priority) headers.Priority = String(opts.priority)
+  if (opts.clickUrl) headers.Click = opts.clickUrl
+  if (opts.tags && opts.tags.length > 0) headers.Tags = opts.tags.join(',')
+  if (config.token) headers.Authorization = `Bearer ${config.token}`
 
   try {
     const res = await fetch(url, {
@@ -73,14 +67,10 @@ export async function notify(
     })
     if (!res.ok) {
       return err(
-        makeError(
-          'ntfy.non-2xx',
-          `ntfy.sh returned ${res.status} ${res.statusText}`,
-          {
-            cause: { url, status: res.status },
-            fix: 'Check topic name + (if protected) token',
-          },
-        ),
+        makeError('ntfy.non-2xx', `ntfy.sh returned ${res.status} ${res.statusText}`, {
+          cause: { url, status: res.status },
+          fix: 'Check topic name + (if protected) token',
+        }),
       )
     }
     return ok(undefined)
@@ -112,7 +102,7 @@ export async function* subscribe(
   const url = `${baseUrl}/${encodeURIComponent(config.topic)}/json`
 
   const headers: Record<string, string> = {}
-  if (config.token) headers['Authorization'] = `Bearer ${config.token}`
+  if (config.token) headers.Authorization = `Bearer ${config.token}`
 
   const res = await fetch(url, { headers, ...(signal ? { signal } : {}) })
   if (!res.ok || !res.body) {
@@ -129,8 +119,9 @@ export async function* subscribe(
     buffer += decoder.decode(value, { stream: true })
 
     // ntfy streams newline-delimited JSON
-    let nlIdx: number
-    while ((nlIdx = buffer.indexOf('\n')) >= 0) {
+    for (;;) {
+      const nlIdx = buffer.indexOf('\n')
+      if (nlIdx < 0) break
       const line = buffer.slice(0, nlIdx)
       buffer = buffer.slice(nlIdx + 1)
       if (line.length === 0) continue
@@ -170,5 +161,5 @@ export function parseDispatchTrigger(
   if (!msg.message) return null
   const match = msg.message.trim().match(/^dispatch\s+(\S+)(?:\s+--task\s+(\S+))?\s*$/i)
   if (!match) return null
-  return match[2] ? { slug: match[1]!, taskId: match[2] } : { slug: match[1]! }
+  return match[2] ? { slug: match[1] as string, taskId: match[2] } : { slug: match[1] as string }
 }
