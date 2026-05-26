@@ -16,11 +16,15 @@
  * tier-aware retry caps + full HITL gate suite are v1.5+.
  */
 
+import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { runBuilder } from '../agents/builder/index.js'
 import { runReporter } from '../agents/reporter/index.js'
 import { runReviewer } from '../agents/reviewer/index.js'
 import { runTester } from '../agents/tester/index.js'
+import { notify } from '../integrations/ntfy.js'
 import { estimateCost } from '../router/select-model.js'
 import {
   type AppError,
@@ -36,14 +40,10 @@ import {
   makeError,
   ok,
 } from '../types/index.js'
-import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { notify } from '../integrations/ntfy.js'
 import { writeAuditRow } from './audit-log.js'
 import { buildG2Request, enqueue } from './hitl-queue.js'
-import { projectDir } from './state.js'
 import { shouldRetry } from './retry-policy.js'
+import { projectDir } from './state.js'
 import { readState, updateState } from './state.js'
 
 /**

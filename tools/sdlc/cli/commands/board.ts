@@ -5,12 +5,12 @@
  * by column; prints a compact kanban.
  */
 
-import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { CANONICAL_COLUMNS, findProject, listItems } from '../../integrations/github-projects.js'
-import { asProjectSlug } from '../../types/index.js'
 import { projectDir } from '../../orchestrator/state.js'
+import { asProjectSlug } from '../../types/index.js'
 import { hasFlag, parseArgs } from '../args.js'
 
 const HELP = `pnpm sdlc board — render the GitHub Project board
@@ -53,7 +53,7 @@ export async function runBoard(argv: readonly string[]): Promise<number> {
   }
   if (!owner) {
     process.stderr.write(
-      `❌ Cannot determine GitHub owner.\n   Either onboard the project (which sets owner) or pass --owner <handle>.\n`,
+      '❌ Cannot determine GitHub owner.\n   Either onboard the project (which sets owner) or pass --owner <handle>.\n',
     )
     return 1
   }
@@ -99,9 +99,7 @@ export async function runBoard(argv: readonly string[]): Promise<number> {
     for (const item of bucket.slice(0, 10)) {
       const labelTier = item.content.labels?.find((l) => l.startsWith('tier:')) ?? ''
       const tierTag = labelTier ? ` [${labelTier}]` : ''
-      process.stdout.write(
-        `  #${item.content.number}  ${item.title}${tierTag}\n`,
-      )
+      process.stdout.write(`  #${item.content.number}  ${item.title}${tierTag}\n`)
     }
     if (bucket.length > 10) {
       process.stdout.write(`  ... and ${bucket.length - 10} more\n`)

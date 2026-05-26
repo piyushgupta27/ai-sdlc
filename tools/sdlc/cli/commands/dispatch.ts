@@ -12,8 +12,8 @@
  * on every received `dispatch <slug>` message.
  */
 
-import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   type ProjectItem,
@@ -24,12 +24,7 @@ import {
 import { parseDispatchTrigger, subscribe } from '../../integrations/ntfy.js'
 import { runTask } from '../../orchestrator/index.js'
 import { projectDir, readState } from '../../orchestrator/state.js'
-import {
-  type ProjectSlug,
-  type Task,
-  type Tier,
-  asProjectSlug,
-} from '../../types/index.js'
+import { type ProjectSlug, type Task, type Tier, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 
 const HELP = `pnpm sdlc dispatch — run the orchestrator on a project
@@ -92,7 +87,7 @@ export async function runDispatch(argv: readonly string[]): Promise<number> {
   if (taskSpec) return dispatchManualSpec(slug, taskSpec)
   if (isWebhook) {
     if (!topic) {
-      process.stderr.write(`❌ --webhook requires --topic <ntfy-topic>\n`)
+      process.stderr.write('❌ --webhook requires --topic <ntfy-topic>\n')
       return 2
     }
     return dispatchWebhookLoop(slug, topic, maxTasks)
@@ -147,7 +142,7 @@ async function dispatchFromBoard(
 ): Promise<number> {
   const cfg = await readConfig(slug)
   if (!cfg) {
-    process.stderr.write(`❌ Cannot read project config\n`)
+    process.stderr.write('❌ Cannot read project config\n')
     return 1
   }
 
@@ -182,7 +177,9 @@ async function dispatchFromBoard(
       return 1
     }
 
-    process.stdout.write(`\n→ ${task.id} (#${next.content.number}) "${task.title}" [tier:${task.tier}]\n`)
+    process.stdout.write(
+      `\n→ ${task.id} (#${next.content.number}) "${task.title}" [tier:${task.tier}]\n`,
+    )
 
     const result = await runTask({
       project: slug,
@@ -200,7 +197,11 @@ async function dispatchFromBoard(
     // Move card based on outcome
     const outcome = result.value
     const nextCol =
-      outcome.result === 'merged' ? 'Done' : outcome.result === 'hitl-pending' ? 'Blocked' : 'Blocked'
+      outcome.result === 'merged'
+        ? 'Done'
+        : outcome.result === 'hitl-pending'
+          ? 'Blocked'
+          : 'Blocked'
     await moveItem(project.value, next.id, nextCol)
     printOutcome(outcome)
 
@@ -223,14 +224,18 @@ async function dispatchWebhookLoop(
   topic: string,
   maxTasks: number,
 ): Promise<number> {
-  process.stdout.write(`\n🔔 Subscribed to ntfy.sh/${topic}\n   Send "dispatch ${slug}" from anywhere to trigger.\n   Ctrl-C to stop.\n\n`)
+  process.stdout.write(
+    `\n🔔 Subscribed to ntfy.sh/${topic}\n   Send "dispatch ${slug}" from anywhere to trigger.\n   Ctrl-C to stop.\n\n`,
+  )
 
   let dispatched = 0
   for await (const msg of subscribe({ topic })) {
     const trigger = parseDispatchTrigger(msg)
     if (!trigger) continue
     if (trigger.slug !== slug) {
-      process.stdout.write(`(received trigger for ${trigger.slug}; this dispatcher is bound to ${slug} — skipping)\n`)
+      process.stdout.write(
+        `(received trigger for ${trigger.slug}; this dispatcher is bound to ${slug} — skipping)\n`,
+      )
       continue
     }
 
@@ -242,7 +247,7 @@ async function dispatchWebhookLoop(
 
     if (dispatched >= 1000) {
       // Safety cap; webhook listener shouldn't run forever in practice
-      process.stdout.write(`Hit 1000-dispatch cap; restart the listener if you want more.\n`)
+      process.stdout.write('Hit 1000-dispatch cap; restart the listener if you want more.\n')
       return 0
     }
   }

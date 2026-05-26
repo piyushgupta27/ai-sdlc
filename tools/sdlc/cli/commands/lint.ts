@@ -11,12 +11,12 @@
  * for vague tickets (the full "Eric Superboard" UX).
  */
 
-import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { findProject, listItems } from '../../integrations/github-projects.js'
-import { asProjectSlug } from '../../types/index.js'
 import { projectDir } from '../../orchestrator/state.js'
+import { asProjectSlug } from '../../types/index.js'
 import { hasFlag, parseArgs } from '../args.js'
 
 const HELP = `pnpm sdlc lint — pre-dispatch ticket clarification
@@ -64,7 +64,9 @@ export async function runLint(argv: readonly string[]): Promise<number> {
     }
   }
   if (!owner) {
-    process.stderr.write(`❌ Cannot determine GitHub owner. Pass --owner <handle> or onboard first.\n`)
+    process.stderr.write(
+      '❌ Cannot determine GitHub owner. Pass --owner <handle> or onboard first.\n',
+    )
     return 1
   }
 
@@ -86,14 +88,16 @@ export async function runLint(argv: readonly string[]): Promise<number> {
   }
 
   if (hasFlag(args, 'json')) {
-    process.stdout.write(`${JSON.stringify({ ticketsScanned: items.value.length, findings }, null, 2)}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ ticketsScanned: items.value.length, findings }, null, 2)}\n`,
+    )
     return findings.some((f) => f.severity === 'error') ? 1 : 0
   }
 
   process.stdout.write(`\n${slug} · lint Ready column · ${items.value.length} tickets scanned\n\n`)
 
   if (findings.length === 0) {
-    process.stdout.write(`✓ No issues. Ready to dispatch.\n`)
+    process.stdout.write('✓ No issues. Ready to dispatch.\n')
     return 0
   }
 
@@ -118,14 +122,18 @@ export async function runLint(argv: readonly string[]): Promise<number> {
   const warnCount = findings.filter((f) => f.severity === 'warn').length
   process.stdout.write(`${errorCount} error(s), ${warnCount} warning(s).\n`)
   if (errorCount > 0) {
-    process.stdout.write(`Fix errors before dispatch — headless agents will stall on vague tickets.\n`)
+    process.stdout.write(
+      'Fix errors before dispatch — headless agents will stall on vague tickets.\n',
+    )
     return 1
   }
-  process.stdout.write(`OK to dispatch.\n`)
+  process.stdout.write('OK to dispatch.\n')
   return 0
 }
 
-function lintItem(item: import('../../integrations/github-projects.js').ProjectItem): LintFinding[] {
+function lintItem(
+  item: import('../../integrations/github-projects.js').ProjectItem,
+): LintFinding[] {
   const findings: LintFinding[] = []
   const num = item.content.number
   const title = item.title
