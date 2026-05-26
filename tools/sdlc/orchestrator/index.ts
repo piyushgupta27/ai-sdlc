@@ -58,6 +58,14 @@ export interface TaskRunOutcome {
   readonly costUsd: number
   readonly durationMs: number
   readonly notes?: string
+  /**
+   * BUILDER's commit SHA on the feature branch (empty when no commit was
+   * produced — e.g. AC vacuously satisfied). Surface so dispatch can decide
+   * whether to run `gh pr create` post-orchestrator.
+   */
+  readonly commitSha?: string
+  /** Feature branch name BUILDER worked on (e.g. `feature/gh-2`) */
+  readonly branch?: string
 }
 
 /**
@@ -328,6 +336,11 @@ function nextStageAfter(
   outcome: string,
   retriesUsed: number,
 ): Stage | 'DONE' | 'BLOCKED' {
+  // 'partial' falls through to the success path on purpose. TESTER marks
+  // partial when some ACs can only be human-verified (word counts, "no
+  // other files changed", etc.) — REVIEWER then validates them by
+  // inspection. This was an intentional design choice surfaced by the
+  // smoke test on gh-2; do not change to BLOCKED.
   if (outcome === 'escalated' || outcome === 'failure') return 'BLOCKED'
   switch (stage) {
     case 'BUILD':
@@ -346,7 +359,7 @@ function nextStageAfter(
 }
 
 async function finalizeSuccess(
-  opts: { project: ProjectSlug; task: Task; targetRepo: string },
+  opts: { project: ProjectSlug; task: Task; targetRepo: string; branch?: string },
   buildOutput: { commitSha: string },
   auditRunIds: string[],
   totalCost: number,
@@ -364,7 +377,7 @@ async function finalizeSuccess(
 
   const sha = buildOutput.commitSha?.trim() ?? ''
   const notes = sha
-    ? `Build commit: ${sha}; ready for COMMIT stage in CLI`
+    ? `Build commit: ${sha}; PR creation handed off to CLI dispatch verb`
     : 'No commit produced — BUILDER reported no changes required (AC may be vacuously satisfied). Verify in audit log.'
 
   return ok({
@@ -376,6 +389,8 @@ async function finalizeSuccess(
     costUsd: totalCost,
     durationMs: performance.now() - startTime,
     notes,
+    ...(sha ? { commitSha: sha } : {}),
+    branch: opts.branch ?? `feature/${opts.task.id}`,
   })
 }
 
