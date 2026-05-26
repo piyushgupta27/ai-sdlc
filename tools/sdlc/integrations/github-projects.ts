@@ -198,11 +198,21 @@ export async function listItems(
     const status = raw.status as string | undefined
     const url = typeof content.url === 'string' ? content.url : undefined
     const body = typeof content.body === 'string' ? content.body : undefined
-    const labels = Array.isArray(content.labels)
-      ? (content.labels as Array<{ name?: string } | string>).map((l) =>
-          typeof l === 'string' ? l : (l.name ?? ''),
-        )
-      : undefined
+    // `gh project item-list --format json` puts labels at the top-level of the
+    // item (sibling of `content`), not under `content.labels`. Read top-level
+    // first; fall back to content.labels for forward-compat with future gh
+    // versions.
+    const rawLabels = Array.isArray(raw.labels)
+      ? raw.labels
+      : Array.isArray(content.labels)
+        ? content.labels
+        : null
+    const labels =
+      rawLabels === null
+        ? undefined
+        : (rawLabels as Array<{ name?: string } | string>).map((l) =>
+            typeof l === 'string' ? l : (l.name ?? ''),
+          )
 
     return {
       id: String(raw.id ?? ''),

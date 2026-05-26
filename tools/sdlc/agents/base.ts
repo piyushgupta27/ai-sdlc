@@ -164,40 +164,81 @@ function buildUserMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayloa
 }
 
 function parseEnvelope<TOutput>(rawText: string): Result<AgentEnvelope<TOutput>, AppError> {
-  // Strip markdown fences if present (some agents may add them despite instructions)
+  const tryParse = (text: string): AgentEnvelope<TOutput> | null => {
+    try {
+      const parsed = JSON.parse(text) as AgentEnvelope<TOutput>
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'outcome' in parsed &&
+        'output' in parsed
+      ) {
+        return parsed
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  // Strategy 1: outer-fence-stripped, full-string parse
   const cleaned = rawText
     .replace(/^```(?:json)?\s*\n?/i, '')
     .replace(/\n?```\s*$/, '')
     .trim()
+  const direct = tryParse(cleaned)
+  if (direct) return ok(direct)
 
-  try {
-    const parsed = JSON.parse(cleaned) as AgentEnvelope<TOutput>
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      !('outcome' in parsed) ||
-      !('output' in parsed)
-    ) {
-      return err(
-        makeError(
-          'agent.invalid-response',
-          'Agent response missing required fields (outcome, output)',
-          {
-            cause: { rawText: rawText.slice(0, 500) },
-            fix: 'Tune the agent prompt to enforce the response schema',
-          },
-        ),
-      )
-    }
-    return ok(parsed)
-  } catch (cause) {
-    return err(
-      makeError('agent.invalid-response', 'Agent response was not valid JSON', {
-        cause: { rawText: rawText.slice(0, 500), parseError: (cause as Error).message },
-        fix: 'Inspect raw response; consider tightening prompt to forbid prose',
-      }),
-    )
+  // Strategy 2: extract first balanced {...} block. Handles prose-before-JSON,
+  // prose-after-JSON, and mid-prose JSON. String-aware to avoid counting
+  // braces inside string literals.
+  const block = extractFirstJsonObject(rawText)
+  if (block) {
+    const parsed = tryParse(block)
+    if (parsed) return ok(parsed)
   }
+
+  // Surface what we got so the user can diagnose without grepping audit rows.
+  process.stderr.write(
+    `\n[agent.invalid-response] failed to parse response (first 800 chars):\n${rawText.slice(0, 800)}\n[/agent.invalid-response]\n\n`,
+  )
+
+  return err(
+    makeError('agent.invalid-response', 'Agent response was not valid JSON', {
+      cause: { rawText: rawText.slice(0, 800) },
+      fix: 'Inspect stderr for the raw response. Either the prompt needs to forbid prose more strictly, or extend parseEnvelope to handle the wrapper format.',
+    }),
+  )
+}
+
+function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let isEscaped = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (isEscaped) {
+      isEscaped = false
+      continue
+    }
+    if (c === '\\') {
+      isEscaped = true
+      continue
+    }
+    if (c === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return null
 }
 
 function makeAgentResult<TOutput>(
