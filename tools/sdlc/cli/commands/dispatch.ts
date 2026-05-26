@@ -226,9 +226,15 @@ async function dispatchFromBoard(
 
     processed++
 
+    // v1 prior behavior: break the loop on first HITL/failure. This made
+    // overnight autonomous runs impossible — one stuck ticket blocked the
+    // rest. Now: the card is already moved to Blocked above; just log and
+    // continue. The user reviews the Blocked queue in the morning. The
+    // exit code reflects "any failure" so CI can detect partial runs.
     if (outcome.result === 'hitl-pending' || outcome.result === 'failed') {
-      process.stdout.write(`Stopping dispatch loop — HITL/failure on ${task.id}\n`)
-      return outcome.result === 'failed' ? 1 : 0
+      process.stdout.write(
+        `  (${task.id} blocked — continuing to next Ready item)\n`,
+      )
     }
   }
 

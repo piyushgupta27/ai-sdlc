@@ -79,20 +79,25 @@ export function shouldRetry(
     }
   }
 
-  // CHANGES_REQUESTED
-  if (retriesUsed >= MAX_RETRIES_V1) {
-    return {
-      action: 'block',
-      retriesUsed,
-      retriesRemaining: 0,
-      reason: `cap-exhausted:revision-${retriesUsed}:CHANGES_REQUESTED`,
-    }
-  }
-
+  // CHANGES_REQUESTED — v1: treat as pass-with-feedback.
+  //
+  // Smoke tests against piyush-portfolio showed REVIEWER returning
+  // CHANGES_REQUESTED for non-blocking commit-hygiene nits (e.g., "split
+  // your commits"), which then triggered BUILDER retries that hit
+  // permission walls (git reset) or timeouts. The feedback wasn't
+  // important enough to block merge; the loop wasted budget.
+  //
+  // v1 behavior: CHANGES_REQUESTED → proceed to COMMIT, feedback surfaces
+  // in the PR description for human review.
+  //
+  // v1.5+: REVIEWER should return a separate `severity: blocking |
+  // non-blocking` field; retry only when blocking. Until then, REVIEWER
+  // should use FAIL (escalates) for genuinely-must-fix issues and
+  // CHANGES_REQUESTED for advisory feedback.
   return {
-    action: 'retry',
+    action: 'pass',
     retriesUsed,
-    retriesRemaining: MAX_RETRIES_V1 - retriesUsed - 1,
-    reason: `CHANGES_REQUESTED — retry attempt ${retriesUsed + 1} of ${MAX_RETRIES_V1}`,
+    retriesRemaining: MAX_RETRIES_V1 - retriesUsed,
+    reason: 'CHANGES_REQUESTED — advisory feedback, proceed to COMMIT (v1)',
   }
 }
