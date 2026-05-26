@@ -362,6 +362,11 @@ async function finalizeSuccess(
     inFlightTaskIds: s.inFlightTaskIds.filter((id) => id !== opts.task.id),
   }))
 
+  const sha = buildOutput.commitSha?.trim() ?? ''
+  const notes = sha
+    ? `Build commit: ${sha}; ready for COMMIT stage in CLI`
+    : 'No commit produced — BUILDER reported no changes required (AC may be vacuously satisfied). Verify in audit log.'
+
   return ok({
     taskId: opts.task.id,
     result: 'merged',
@@ -370,7 +375,7 @@ async function finalizeSuccess(
     auditRunIds,
     costUsd: totalCost,
     durationMs: performance.now() - startTime,
-    notes: `Build commit: ${buildOutput.commitSha}; ready for COMMIT stage in CLI`,
+    notes,
   })
 }
 
