@@ -23,6 +23,8 @@ out/
 .audit/raw/
 .cache/
 tmp/
+# Per-project state — config has machine-local repoPath; state mutates per run
+projects/
 
 # Editor + OS
 .vscode/
