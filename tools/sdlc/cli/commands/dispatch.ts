@@ -232,9 +232,7 @@ async function dispatchFromBoard(
     // continue. The user reviews the Blocked queue in the morning. The
     // exit code reflects "any failure" so CI can detect partial runs.
     if (outcome.result === 'hitl-pending' || outcome.result === 'failed') {
-      process.stdout.write(
-        `  (${task.id} blocked — continuing to next Ready item)\n`,
-      )
+      process.stdout.write(`  (${task.id} blocked — continuing to next Ready item)\n`)
     }
   }
 
@@ -414,9 +412,14 @@ async function maybeCreatePr(args: {
   process.stdout.write(`  ▸ Pushing ${args.branch}...\n`)
   const push = await runShell('git', ['push', '-u', 'origin', args.branch], args.repoPath)
   if (push.code !== 0) {
-    process.stderr.write(`  ⚠️  Push failed (exit ${push.code}). Branch is local at ${args.commitSha}.\n`)
-    if (push.stderr) process.stderr.write(`     ${push.stderr.trim().split('\n').slice(0, 3).join('\n     ')}\n`)
-    process.stderr.write(`     Manual: cd ${args.repoPath} && git push -u origin ${args.branch} && gh pr create\n`)
+    process.stderr.write(
+      `  ⚠️  Push failed (exit ${push.code}). Branch is local at ${args.commitSha}.\n`,
+    )
+    if (push.stderr)
+      process.stderr.write(`     ${push.stderr.trim().split('\n').slice(0, 3).join('\n     ')}\n`)
+    process.stderr.write(
+      `     Manual: cd ${args.repoPath} && git push -u origin ${args.branch} && gh pr create\n`,
+    )
     return
   }
 
@@ -436,23 +439,15 @@ async function maybeCreatePr(args: {
   process.stdout.write(`  ▸ Opening PR for #${args.issueNumber}...\n`)
   const prResult = await runShell(
     'gh',
-    [
-      'pr',
-      'create',
-      '--base',
-      'main',
-      '--head',
-      args.branch,
-      '--title',
-      title,
-      '--body',
-      body,
-    ],
+    ['pr', 'create', '--base', 'main', '--head', args.branch, '--title', title, '--body', body],
     args.repoPath,
   )
   if (prResult.code !== 0) {
     process.stderr.write(`  ⚠️  PR create failed (exit ${prResult.code}).\n`)
-    if (prResult.stderr) process.stderr.write(`     ${prResult.stderr.trim().split('\n').slice(0, 3).join('\n     ')}\n`)
+    if (prResult.stderr)
+      process.stderr.write(
+        `     ${prResult.stderr.trim().split('\n').slice(0, 3).join('\n     ')}\n`,
+      )
     return
   }
   process.stdout.write(`  ✓ PR opened: ${prResult.stdout.trim()}\n`)
@@ -466,7 +461,9 @@ async function maybeCreatePr(args: {
 async function resetToMain(repoPath: string): Promise<void> {
   const result = await runShell('git', ['checkout', 'main'], repoPath)
   if (result.code !== 0) {
-    process.stderr.write(`  ⚠️  Could not checkout main after task — manual cleanup may be needed.\n`)
+    process.stderr.write(
+      `  ⚠️  Could not checkout main after task — manual cleanup may be needed.\n`,
+    )
     if (result.stderr) {
       process.stderr.write(`     ${result.stderr.trim().split('\n').slice(0, 2).join('\n     ')}\n`)
     }

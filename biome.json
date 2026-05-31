@@ -13,7 +13,7 @@
       "coverage",
       ".sdlc-sandboxes",
       "projects/*/sandboxes",
-      ".audit/raw",
+      ".audit",
       "*.md",
       "LICENSE",
       "NOTICE"
