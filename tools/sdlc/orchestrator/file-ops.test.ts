@@ -8,6 +8,7 @@
 import { chmod, copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { agentRead, agentWrite } from './file-ops.js'
 
@@ -27,7 +28,9 @@ const FIXTURE_CLAUDE_MD = `
 
 describe('file-ops', () => {
   let tmpRepo: string
-  const hookSrc = '/Users/piyush/Workspace/ai-sdlc/tools/check-blast-radius.sh'
+  // Resolve the real hook relative to this test file (…/tools/sdlc/orchestrator/),
+  // so it works in CI / any checkout — not a hardcoded local absolute path.
+  const hookSrc = fileURLToPath(new URL('../../../tools/check-blast-radius.sh', import.meta.url))
 
   beforeEach(async () => {
     tmpRepo = await mkdtemp(join(tmpdir(), 'file-ops-test-'))

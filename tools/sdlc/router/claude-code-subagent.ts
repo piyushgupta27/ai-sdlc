@@ -59,11 +59,21 @@ export interface SubagentTransport {
 }
 
 /**
+ * Least-privilege tool allow-list for spawned agents (findings F4 / F4b).
+ * Comma-separated (the CLI accepts comma- or space-separated). Scoped to file +
+ * shell tools only — deliberately excludes web fetch and MCP. If an agent
+ * legitimately needs another tool, widen this list rather than disabling
+ * permission checks wholesale.
+ */
+const ALLOWED_AGENT_TOOLS = 'Read,Glob,Grep,Edit,Write,Bash'
+
+/**
  * The v1 transport — spawns `claude` CLI in print mode.
  *
  * CLI flags used:
  *   --print "<msg>"                Non-interactive; print response + exit
  *   --model <id>                   Model selection
+ *   --allowedTools <tools>         Scoped, least-privilege tool grant (F4)
  *   --append-system-prompt <text>  Add agent role to system prompt
  *
  * The cwd of the spawned process is set to the target repo so any
@@ -84,6 +94,16 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         '--print',
         '--model',
         opts.model,
+        // Agents run non-interactively (--print): there is no human to answer
+        // permission prompts, so without an explicit allow-list every
+        // Write/Edit/Bash(git) call is denied and BUILDER/TESTER can never
+        // produce code (finding F4, see docs/plans/verification-2026-05-31.md).
+        // Grant a SCOPED, least-privilege tool set (A8): file read/edit/write +
+        // shell (git/build/test) within cwd (the target repo) — NO web, NO MCP.
+        // Defense-in-depth is the platform's own guardrails: blast-radius
+        // pre-commit hook, Red-zone tiers, HITL gates, and the CHECKER.
+        '--allowedTools',
+        ALLOWED_AGENT_TOOLS,
         '--append-system-prompt',
         opts.systemPrompt,
         opts.userMessage,
