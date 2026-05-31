@@ -68,6 +68,55 @@ export interface SubagentTransport {
 const ALLOWED_AGENT_TOOLS = 'Read,Glob,Grep,Edit,Write,Bash'
 
 /**
+ * Env vars passed through to spawned agents — DENY BY DEFAULT.
+ *
+ * Agents run with `Bash` (F4), so inheriting the full `process.env` would let a
+ * prompt-injected agent read every host secret (API keys, cloud creds, tokens)
+ * and exfiltrate it (2026-05-31 security baseline, finding #1). We pass ONLY this
+ * minimal set of non-secret operational vars needed for the `claude` CLI + git +
+ * build/test to run. Claude Code auth comes from the macOS keychain / ~/.claude
+ * (via HOME), not an env var. Widen ONLY with non-secret operational vars — never
+ * with `*_KEY`/`*_TOKEN`/`*_SECRET`/cloud-credential vars.
+ */
+const AGENT_ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'SHELL',
+  'USER',
+  'LOGNAME',
+  'TERM',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  // Proxy / custom-CA passthrough so dispatch works on corporate-proxied hosts.
+  // (Proxy URLs can embed low-value creds; acceptable vs. breaking egress, and
+  // far below the API-key/cloud-cred exposure this scoping removes.)
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+] as const
+
+/** Build the scoped agent env from the allow-list (+ the optional approval token). */
+function buildAgentEnv(blastRadiusApproved?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of AGENT_ENV_ALLOWLIST) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
+  }
+  if (blastRadiusApproved) env.BLAST_RADIUS_APPROVED = blastRadiusApproved
+  return env
+}
+
+/**
  * The v1 transport — spawns `claude` CLI in print mode.
  *
  * CLI flags used:
@@ -109,10 +158,10 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         opts.userMessage,
       ]
 
-      const env = {
-        ...process.env,
-        ...(opts.blastRadiusApproved ? { BLAST_RADIUS_APPROVED: opts.blastRadiusApproved } : {}),
-      }
+      // DENY-BY-DEFAULT env (finding #1): agents get only a scoped allow-list,
+      // never the full process.env — a prompt-injected agent must not be able to
+      // read host secrets from the environment.
+      const env = buildAgentEnv(opts.blastRadiusApproved)
 
       const child = spawn('claude', args, {
         cwd: opts.cwd,
