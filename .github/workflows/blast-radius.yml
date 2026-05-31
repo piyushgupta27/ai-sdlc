@@ -3,6 +3,9 @@ name: blast-radius
 on:
   pull_request:
     branches: [main]
+    # Include labeled/unlabeled so applying the `manager-approved` sign-off
+    # re-runs this gate (default types don't fire on label changes).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
