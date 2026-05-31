@@ -40,6 +40,16 @@ The following paths require human sign-off at COMMIT (G3). Agents MUST refuse to
 
 Tier 2-4 are everything else by default. Tier classification for new files is set at PR creation via the `tier:N` label.
 
+## Approval & authorship (MUST — human control)
+
+Hard rules. Mechanized enforcement (separate bot identity + branch protection) is
+deferred and tracked in `AGENT-GOVERNANCE.md §9`; until then these are enforced by
+convention — and they are non-negotiable.
+
+- **The agent NEVER self-approves.** Approval of any MANAGER-gated change (Red-zone / Tier 0–1, and **any** change to this `CLAUDE.md`) is a **human action only**. The agent **posts the PR link and waits** for Piyush's PR review / "Approved" comment; it must **not** apply an approval label, submit an approving review, or otherwise manufacture approval. **Verify the human review exists before merge; never merge a Red-zone PR on the agent's own authority.**
+- **Commit authorship = the user.** Always author commits as Piyush (his GitHub-linked email) so contributions land on his graph. A separate bot identity, once set up, is for **PR-opening only** — never for commit authorship.
+- Full model + the deferred mechanization: `AGENT-GOVERNANCE.md §4.1`.
+
 ## Architecture
 
 - **Pattern:** event-driven orchestrator + stateless agents + append-only audit log
