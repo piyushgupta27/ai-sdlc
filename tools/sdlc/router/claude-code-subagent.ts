@@ -93,6 +93,16 @@ const AGENT_ENV_ALLOWLIST = [
   'XDG_CONFIG_HOME',
   'XDG_CACHE_HOME',
   'XDG_DATA_HOME',
+  // Proxy / custom-CA passthrough so dispatch works on corporate-proxied hosts.
+  // (Proxy URLs can embed low-value creds; acceptable vs. breaking egress, and
+  // far below the API-key/cloud-cred exposure this scoping removes.)
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
 ] as const
 
 /** Build the scoped agent env from the allow-list (+ the optional approval token). */
