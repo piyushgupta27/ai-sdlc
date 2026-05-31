@@ -28,6 +28,73 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-05-31 12:55 — piyush-portfolio: 6 PRs open + Vercel just connected + MCP installed; restart needed
+
+**State:** piyush-portfolio is the second ai-sdlc testbed and the focus this session. Six tickets dispatched, six PRs open (#7-#12 on `piyushgupta27/piyush-portfolio`). Vercel project created + connected; production deployed `main` (still aaabad's baseline because none of the PRs are merged yet). **Vercel coding-agent plugin just installed via `npx plugins add vercel/vercel-plugin`** — 26 skills + 6 cmds + 3 agents + hooks + MCP registered. **Requires Claude Code restart before the new `mcp__vercel__*` tools become available.**
+
+**Just completed (this session):**
+- Forked `aaaby-code/portfolio` → `~/Workspace/piyush-portfolio` (Next.js 16 + Tailwind v4 + shadcn + Geist + framer-motion)
+- Swapped accent: cyan → Soft Teal (`oklch(0.87 0.10 175)` ≈ `#5eead4`)
+- Pushed to `github.com/piyushgupta27/piyush-portfolio` (public)
+- Bootstrapped as ai-sdlc testbed #2 (project #2, all canonical columns, tier labels)
+- Filed 6 tickets, dispatched via ai-sdlc → 6 PRs open. **Result: 3 truly autonomous (PR #9/#10/#11), 3 needed manual cleanup (PR #7/#8/#12). 700+ lines of real code + tests.**
+- **Fixed 3 ai-sdlc platform bugs surfaced by this dispatch** (commit `0319a8f` + `08ea5ff` on ai-sdlc main):
+  - `gh project item-list --format json` parsing failed on multi-line issue bodies — added state-machine sanitizer
+  - retry-policy.ts: `CHANGES_REQUESTED` triggered useless BUILDER retries — now passes through
+  - dispatch.ts: loop broke on first HITL/failure — now continues, marks Blocked, moves on
+- Vercel project deployed `main` to `piyush-portfolio-piyushguptaece-2914.vercel.app` (URL guessed; verify via dashboard)
+- Discovered Vercel doesn't auto-create previews for pre-existing branches — needs push or API trigger
+- Installed Vercel coding-agent plugin
+
+**Up next (after Claude Code restart):**
+
+1. **Use the new `mcp__vercel__*` MCP tools** to fetch real preview URLs for each of PRs #7-#12 (currently 404 on guessed URL patterns). If a branch has no preview, trigger one via `trigger_deployment`.
+2. **For each preview URL**: `/browse` desktop + mobile, screenshot, capture console errors. Post the screenshots as comments on each PR.
+3. **You wake up tomorrow to 6 PRs with embedded visual evidence** — review and merge.
+4. **File ai-sdlc#N: VISUAL_VERIFIER agent** — extends TESTER with /browse-driven screenshots + lighthouse + axe, attaches to audit row. v1.5 architecture work.
+5. **File ai-sdlc#N+1: PR body templating with visual evidence** — auto-embed screenshots in PR description from BUILDER's preview deploy.
+6. **Phase B (deferred)**: trip-research MIGRATION.md execution. Still waiting on user "go" for Tier 0.
+
+**Reference paths:**
+- piyush-portfolio repo: `~/Workspace/piyush-portfolio/`
+- GH Project: `https://github.com/users/piyushgupta27/projects/2`
+- Vercel project: `https://vercel.com/piyushguptaece-2914/piyush-portfolio`
+- ai-sdlc fixes shipped this session: commits `0319a8f` (retry/dispatch) + `08ea5ff` (gh JSON sanitizer)
+
+**Open PRs (all on piyush-portfolio):**
+- #7 — feature/gh-1 — hero copy
+- #8 — feature/gh-2 — about bio
+- #9 — feature/gh-4 — Slice + jM experience (autonomous)
+- #10 — feature/gh-5 — contact links (autonomous)
+- #11 — feature/gh-6 — site metadata (autonomous)
+- #12 — feature/gh-3 — 5 projects (manual recovery after post-commit hang)
+
+**Things explicitly NOT done yet:**
+- piyushgupta.io custom domain attached to Vercel (Settings → Domains)
+- Visual QA via Vercel previews (this is what restart unblocks)
+- ai-sdlc visual-verifier agent (file as ticket)
+- ai-sdlc gh-3-style post-commit-hang investigation (the 11-hour wall-time bug)
+
+### 2026-05-26 16:45 — b complete: COMMIT stage wired + branch-reset + TESTER 'partial' documented
+
+**State:** All 3 polish items from smoke test #2 addressed. ai-sdlc dispatch now does: BUILDER commits → push branch → `gh pr create` → card to Done → `git checkout main`. End-to-end autonomous PR creation, with deliberate permission gates for the first time push/gh pr create fire.
+
+**Just completed:**
+- `TaskRunOutcome` now carries `commitSha` and `branch` (orchestrator/index.ts) — threaded from finalizeSuccess.
+- `dispatch.ts` got `maybeCreatePr()` + `resetToMain()` helpers. On merged + non-empty commitSha: push the feature branch, then `gh pr create --base main --head <branch>`. PR body templated from issue (Closes #N + summary + ticked AC checklist + ai-sdlc footer with short SHA).
+- Best-effort error handling: push or PR-create failures log + continue (branch is local, user can finish manually). The user is prompted for `git push` + `gh pr create` permissions on first run; granting "always" makes subsequent runs fully autonomous.
+- `git checkout main` after every task (success OR failure), preventing the "left on feature/gh-2" footgun from smoke test #2.
+- `nextStageAfter` got a code-comment lock-in: TESTER 'partial' is intentional (human-verifiable ACs); never escalate to BLOCKED.
+
+**Shipped at `660065c`.** 31/31 tests still pass. NOT yet live-tested — no smoke test for the PR-creation path yet.
+
+**Up next (Phase B):**
+1. Optionally: file a small test issue + dispatch to verify `maybeCreatePr` actually fires correctly (5 min). Recommended before Phase B, but skippable.
+2. Read `~/Workspace/ai-workspace/projects/active/trip-research/MIGRATION.md`, summarize the Tier 0 destructive actions, get explicit user go.
+3. Run `bootstrap-project-board.sh trip-research piyushgupta27 piyushgupta27/trip-research`.
+4. `pnpm sdlc onboard --slug trip-research ...`
+5. First real-world testbed dispatch.
+
 ### 2026-05-26 16:30 — Phase A shipped + first real end-to-end commit through the pipeline
 
 **State:** v1 pipeline operational. First real-commit smoke test passed at 101s, 0 retries. SHA `3d91c7b` ("docs: update README status — Phase A shipped") authored on `feature/gh-2` by BUILDER (Sonnet 4.6), verified by TESTER + REVIEWER, audit chain intact. Card #2 on GH Project #1 → Done. Currently on `main` after switching off `feature/gh-2`.
