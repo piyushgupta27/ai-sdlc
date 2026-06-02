@@ -28,6 +28,58 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-02 (late) — Merge-strategy standard + TEAM-LEAD shipped (PR #18) · Stage-1 CHECKER is next · HANDOFF
+
+**State (workstream B — platform/security/process; not piyush-portfolio):** Runway-clearing is essentially DONE. Next real feature = **Stage 1: build the CHECKER**. Full kickoff prompt for a fresh conversation: **`docs/plans/stage-1-checker-kickoff.md`** (read it + `docs/plans/2026-05-31-aisdlc-maturity-plan.md` + `AGENT-GOVERNANCE.md`).
+
+**Just shipped / merged to ai-sdlc main:** PR #18 (squash) — governance §7.1 **squash-merge default + merge queue + no stacked PRs** (portfolio override = rebase), §7.2 + roster + AGENT-SPECS = new **TEAM-LEAD** agent (merges Tier 2–3 after release checklist; escalates Tier 0–1 to MANAGER), + the **ride-along policy** for operational docs. Earlier today: PR #8 (CLAUDE.md MUST: agent never self-approves) + career-automation PR #49 (dashboard 127.0.0.1 + traversal guards) both merged.
+
+**Decisions locked this session:** merge = squash (per-repo override ok); TEAM-LEAD merges Tier 2–3 / MANAGER gates Tier 0–1; operational/continuation docs ride the next PR (never direct main push, never standalone PR); credential-isolation/bot-identity = long-term (Issue #9).
+
+**Branch protection — guidance given, NOT yet applied (user to do):** Tier-1 now (require PR + status checks `typecheck + lint + test` & `red zone enforcement` + linear history + block force-push; `required_pull_request_reviews:null` because solo can't self-approve → don't require reviews until the bot identity exists). `gh api -X PUT repos/piyushgupta27/ai-sdlc/branches/main/protection` body in chat. Merge-queue + squash-only = UI toggles (Settings→Branches / Settings→General→PRs). Tier-2 (required CODEOWNER review + bot identity) = Issue #9.
+
+**Open backlog (GH issues):** ai-sdlc #9 (mechanize approval gate — bot identity + branch protection + rewire blast-radius→human-review; credential isolation is the linchpin) #10 (sandbox+egress+F4b) #11 (CI secret/dep/SAST) #12 (ntfy auth) #13 (SHA-pin) #14 (dev CVEs) #15 (--theirs rebase footgun) #16 (BUILDER post-commit hang) #17 (TESTER poll Vercel); career-automation #50 (vitest v4) #51 (94MB wav→LFS).
+
+**Env (critical):** ai-sdlc=**Node 22** (`export PATH="/opt/homebrew/opt/node@22/bin:$PATH"`, pnpm10); career-automation=**Node 20** (default; npm; better-sqlite3 binding breaks under Node 22).
+
+**Git-state note at handoff:** shared ai-sdlc working tree had cross-session friction (CONTINUATION.md edited by both the portfolio session + this one). Local branch `chore/merge-strategy-team-lead` was merged (remote deleted) but a dirty CONTINUATION.md blocked the switch to main — resolve by committing/stashing the continuation edits (they ride the next PR) then `git checkout main`.
+
+### 2026-06-02 23:?? — piyush-portfolio polish complete · PRs #21 + #22 merged · 3 platform tickets filed
+
+**State:** Portfolio site live at https://piyush-portfolio-topaz.vercel.app/ continues to render Piyush's real content. PRs #21 + #22 merged to `main` on 2026-06-02 (16:18 + 16:30 UTC). 3 ai-sdlc platform-improvement tickets filed.
+
+**Just shipped this session:**
+- **piyush-portfolio PR #21** — `security: tighten .claude/settings.json subagent permissions (CSO #7)` — replaces `Bash(pnpm:*)/(node:*)/(npx:*)` wildcards with explicit 9-verb allowlist. Closes CSO Finding #7 (LOW). Local typecheck+lint green. Needs user review/merge.
+- **piyush-portfolio PR #22** — `content: real blog posts + real headshot (replaces aaabad placeholders)` — two CSO-missed issues fixed: (a) 4 fictional blog posts in `src/data/blog.ts` swapped for 4 real Medium posts from piyushguptaece.medium.com with `target=_blank` link-outs, (b) stock Unsplash portrait in `about.tsx` swapped for real headshot at `public/images/headshot.jpg` (216KB JPG, user-provided). Local typecheck+lint green.
+- **3 ai-sdlc platform tickets filed:**
+  - [#15](https://github.com/piyushgupta27/ai-sdlc/issues/15) — `--theirs` rebase footgun (silently reverts dep upgrades; need semantic-merge or `--theirs` ban)
+  - [#16](https://github.com/piyushgupta27/ai-sdlc/issues/16) — BUILDER post-commit hang pattern (300s timeout; likely pnpm 11 approve-builds wait; needs diagnostic logging first)
+  - [#17](https://github.com/piyushgupta27/ai-sdlc/issues/17) — TESTER should poll Vercel deploy state and fail task on production ERROR
+- **Visual verification of live portfolio** done via subagent — content clean (no aaabad leakage; all 6 expected strings render: Piyush Gupta, Available for Sr EM roles, Building autonomous AI tooling, Slice, jumpingMinds, piyushguptaece). Screenshots blocked by `/browse` perms; text extraction was sufficient.
+
+**Two CSO-missed findings surfaced by visual verification:**
+The CSO audit only flagged hardcoded handles + PII regex. It missed:
+1. Fictional blog post titles attributed to Piyush (4 posts in `src/data/blog.ts`)
+2. Generic "person" stock photo in About section labeled as Piyush
+
+→ Lesson for future audits: also check for inherited *attributed* content (blog posts, case studies, testimonials, photos labeled with the new owner's name), not just hardcoded strings.
+
+**Open follow-ups (after PRs #21 + #22 merge):**
+1. **piyushgupta.io domain attach** — DNS: A `@` → `76.76.21.21`, CNAME `www` → `cname.vercel-dns.com`. Then Vercel Settings → Domains. User-driven.
+2. **Phase B: trip-research onboarding** — deferred to a new session (see kickoff prompt below). Tier 0 — destructive/structural.
+3. **Original ai-sdlc up-next backlog** (from 22:?? entry above): git merge-strategy + TEAM-LEAD design Q; Stage 1 CHECKER build.
+
+**Reference paths:**
+- piyush-portfolio repo: `~/Workspace/piyush-portfolio/`
+- Live URL: `https://piyush-portfolio-topaz.vercel.app/`
+- Open PRs: #21 (settings tightening), #22 (content cleanup)
+- CSO report: `/tmp/piyush-portfolio-cso-report.md`
+- Medium feed: https://medium.com/feed/@piyushguptaece
+
+**Lockfile re-sync note:** Local `pnpm install` attempt during verification added an `esbuild: set this to true or false` line to `pnpm-workspace.yaml` (pnpm 11 approve-builds side effect). I reverted that locally before commit. If you see it reappear during future runs, decline-and-revert; don't commit.
+
+**Memory references this session relied on:** [[continuation-doc-zero-exceptions]], [[pre-pr-verification]], [[explicit-git-add]] (caught the workspace.yaml false-positive), [[github-contributions-authorship]] (commits authored as Piyush), [[multi-session-awareness]] (chose handoff file over CONTINUATION.md write).
+
 ### 2026-06-02 22:?? — Platform maturation + security hardening checkpoint (workstream B; not the piyush-portfolio session)
 
 **State:** Maturing ai-sdlc toward N PRs/day under MANAGER (Piyush) control. Stage 0 (verify) done; F4 + a big security/hygiene pass done; **Stage 1 (build the CHECKER) is the next real feature — not started.** Detailed plan: `docs/plans/2026-05-31-aisdlc-maturity-plan.md` + `docs/plans/verification-2026-05-31.md`.
