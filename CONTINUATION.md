@@ -28,6 +28,72 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-02 21:30 — piyush-portfolio LIVE on Vercel · all 10 PRs merged · restoration fix applied
+
+**State:** piyush-portfolio is fully live in production. All 10 originally-planned PRs (#7-#20) merged to `main`. Live production URL: **https://piyush-portfolio-topaz.vercel.app/** (canonical short alias Vercel auto-assigned; the bare `piyush-portfolio.vercel.app` is someone ELSE's site that claimed that short name first — NOT this project). Domain `piyushgupta.io` is NOT yet attached. Content verified live via curl: shows "Piyush Gupta", "Slice", "jumpingMinds", "piyushguptaece" with zero "Aaabad Touk" leakage.
+
+**Project URLs:**
+- Public: `https://piyush-portfolio-topaz.vercel.app/` ← canonical
+- Team-scoped (SSO-protected): `piyush-portfolio-piyushguptaece-2914s-projects.vercel.app`
+- Main branch alias (SSO-protected): `piyush-portfolio-git-main-piyushguptaece-2914s-projects.vercel.app`
+
+**Major findings + fixes from this session:**
+
+1. **Vercel MCP fully working** — `mcp__claude_ai_Vercel__*` tools loaded + used productively. Team `team_oARqsHsV5x5MPV3Bsmy3BUvn`, project `prj_1j416gQpZHnUPlNLgxvaEKsy7hMA`.
+
+2. **Filed + dispatched 4 follow-up CSO tickets** via ai-sdlc:
+   - #13 (gh-13) Move shadcn → devDeps + Next.js upgrade → PR #17
+   - #14 (gh-14) Add CSP + security headers → PR #18
+   - #15 (gh-15) Gitignore `.audit/`/`.sdlc-queue/` → PR #19
+   - #16 (gh-16) Replace aaabad PII in footer/navbar/socials → PR #20
+   3/4 dispatched fully autonomously; gh-16 had the gh-3-style post-commit hang → manually recovered.
+
+3. **Merge-conflict cascade** — after PR #7 + #8 manually merged, all others had package.json conflicts (test scripts diverged). Rebased every branch onto current main with `git checkout --theirs`. All eventually merged.
+
+4. **CRITICAL: `--theirs` rebase silently reverted upgrades** — taking older branches' package.json over newer main reverted PR #17's Next.js 16.2.6 upgrade + shadcn devDeps move, and PR #18's vitest devDeps. Lockfile still had new entries → `ERR_PNPM_OUTDATED_LOCKFILE` → prod deploys for #9/#10 ERRORED. Restored via commit `492cf4a` (manual package.json rewrite + lockfile regen).
+
+5. **One aaabad ref missed by PR #20** — `hero.tsx:108` had GitHub `github.com/aaaby-code` + Twitter `x.com/aaabadcode` in a social-icon row out of #20's scope. Fixed in commit `37abf89` (GitHub → piyushgupta27, Twitter → LinkedIn).
+
+6. **Wrong-URL mistake by me** — I initially told the user the site was at `https://piyush-portfolio.vercel.app/`. WRONG — that's someone else's site. The correct URL is `https://piyush-portfolio-topaz.vercel.app/`. User caught this. Recorded here so next session doesn't repeat.
+
+**Done:**
+- All 10 portfolio PRs merged into main
+- Restoration commit `492cf4a` (deps + lockfile)
+- Hero social-row fix `37abf89`
+- Live deploy verified READY + serving Piyush's content
+- CSO audit run earlier — report at `/tmp/piyush-portfolio-cso-report.md`
+- This entry on main (you're reading it)
+
+**Up next (in order):**
+
+1. **End-to-end visual `/browse` verification** of https://piyush-portfolio-topaz.vercel.app/ — desktop + mobile screenshots, check every section. NOT done yet.
+2. **Attach `piyushgupta.io` domain** in Vercel Settings → Domains (manual; needs DNS at registrar).
+3. **Replace stock hero/about images** (CSO Finding #6) — `hero.tsx:16` and `about.tsx:32` are aaabad's stock Unsplash photos; need real photos before domain attach.
+4. **File 3 ai-sdlc platform follow-ups** (against `piyushgupta27/ai-sdlc`):
+   - `--theirs` rebase footgun: BUILDER shouldn't touch package.json scripts unless explicitly required; or ai-sdlc should auto-rebase open PRs with semantic-merge directives instead of blind --theirs
+   - Post-commit hang pattern (gh-3 / gh-16): BUILDER commits then hangs on post-commit verification → 300s timeout. Investigate `pnpm install` TTY wait on build-script approval.
+   - Vercel deploy verification: TESTER should poll Vercel deploy state post-PR-creation, fail the task if production deploy ERRORs.
+5. **Phase B (deferred)**: trip-research onboarding via `~/Workspace/ai-workspace/projects/active/trip-research/MIGRATION.md` — Tier 0, needs explicit user "go".
+6. **Tighten `.claude/settings.json`** (CSO Finding #7) — narrow `Bash(pnpm:*)`/`Bash(node:*)` wildcards to specific subcommands.
+
+**Reference paths:**
+- piyush-portfolio repo: `~/Workspace/piyush-portfolio/`
+- Live URL: `https://piyush-portfolio-topaz.vercel.app/`
+- Vercel project: `https://vercel.com/piyushguptaece-2914s-projects/piyush-portfolio`
+- GH Project board: `https://github.com/users/piyushgupta27/projects/2`
+- CSO audit report: `/tmp/piyush-portfolio-cso-report.md`
+
+**Open PRs (piyush-portfolio):** NONE. All merged. Board: 10 cards in Done.
+
+**Memory entries this session relied on:** [[ai-sdlc-platform-and-testbeds]], [[personal-brand-portfolio-2026]], [[github-contributions-authorship]], [[pre-pr-verification]], [[multi-session-awareness]] (violated twice on ai-sdlc; lesson: ALWAYS `git branch --show-current` before commit), [[continuation-doc-zero-exceptions]].
+
+**Things needing user attention post-compact:**
+1. Visit https://piyush-portfolio-topaz.vercel.app/ and visually verify it looks correct
+2. Decide on piyushgupta.io domain attach timing
+3. Decide whether to file the 3 ai-sdlc platform follow-up tickets
+
+**Caveat about the OTHER session's branch:** The branch `chore/approval-authorship-must` (open PR on ai-sdlc) has its own earlier copy of this entry (commit `af2ab78`) WITH THE WRONG URL `piyush-portfolio.vercel.app`. When that PR merges, expect a merge conflict on CONTINUATION.md — keep main's version (this entry, with the correct topaz URL).
+
 ### 2026-05-31 12:55 — piyush-portfolio: 6 PRs open + Vercel just connected + MCP installed; restart needed
 
 **State:** piyush-portfolio is the second ai-sdlc testbed and the focus this session. Six tickets dispatched, six PRs open (#7-#12 on `piyushgupta27/piyush-portfolio`). Vercel project created + connected; production deployed `main` (still aaabad's baseline because none of the PRs are merged yet). **Vercel coding-agent plugin just installed via `npx plugins add vercel/vercel-plugin`** — 26 skills + 6 cmds + 3 agents + hooks + MCP registered. **Requires Claude Code restart before the new `mcp__vercel__*` tools become available.**
