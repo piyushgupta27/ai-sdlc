@@ -28,6 +28,22 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-02 22:?? — Platform maturation + security hardening checkpoint (workstream B; not the piyush-portfolio session)
+
+**State:** Maturing ai-sdlc toward N PRs/day under MANAGER (Piyush) control. Stage 0 (verify) done; F4 + a big security/hygiene pass done; **Stage 1 (build the CHECKER) is the next real feature — not started.** Detailed plan: `docs/plans/2026-05-31-aisdlc-maturity-plan.md` + `docs/plans/verification-2026-05-31.md`.
+
+**Merged to ai-sdlc `main` (`3da988e`):** PR #4 (F4 agent `--allowedTools` so dispatch can write) · #5 (Stage-0a docs: AGENT-GOVERNANCE/SDLC-ARCHITECTURE/AGENT-SPECS) · #6 (CRITICAL: deny-by-default agent env, `buildAgentEnv`, no host secrets) · #7 (security-as-SDLC §9 + human-review approval-gate model). CI rehabilitated (was never green); red-zone MANAGER gate functional.
+
+**OPEN — pending MANAGER:** PR #8 (ai-sdlc, `chore/approval-authorship-must`) — CLAUDE.md MUST-rule "agent never self-approves; commits authored as user." Tier-0 → its red-zone CI is RED **by design** (awaiting your `manager-approved` label; agent must not self-apply). typecheck/lint/test pass. · PR #49 (career-automation) — dashboard bind-127.0.0.1 + traversal guards, verified, awaiting review.
+
+**career-automation security DONE:** history scrub force-pushed to `main` (`8910920`) — 21 plaintext-sensitive paths removed from all history, `Kiran Palan`→`Asha Rao` redacted, git-crypt broadened (applications/interviews/state/profile), secrets safe, 51 commits + dates preserved (green intact), mirror backup at `~/Workspace/_backups/career-automation-mirror-20260602-201604.git`, local re-synced. Stale 0.0.0.0 dashboard killed.
+
+**Backlog issues:** ai-sdlc #9 (mechanize approval gate: bot identity + branch protection + rewire blast-radius→human-review) #10 (sandbox+egress+F4b) #11 (CI secret/dep/SAST) #12 (ntfy auth) #13 (SHA-pin) #14 (dev CVEs); career-automation #50 (vitest v4) #51 (94MB wav→LFS).
+
+**Env (critical):** ai-sdlc=**Node 22** (`export PATH="/opt/homebrew/opt/node@22/bin:$PATH"`, pnpm10); career-automation=**Node 20** (default; npm; better-sqlite3 binding breaks under Node 22 → 73 false DB-test failures).
+
+**Up next:** (1) git merge-strategy standardization + TEAM-LEAD merge role (open design Q — user flagged rebase-and-merge serial-conflict pain; leaning squash + merge-queue + TEAM-LEAD; needs approval). (2) **Stage 1: build the CHECKER** (independent L2 meta-checker + CheckerOutput/Deficiency + orchestrator selective-feedback refire; also closes F1 empty audit validations + F5 token/cost parse).
+
 ### 2026-06-02 21:30 — piyush-portfolio LIVE on Vercel · all 10 PRs merged · restoration fix applied
 
 **State:** piyush-portfolio is fully live in production. All 10 originally-planned PRs (#7-#20) merged to `main`. Live production URL: **https://piyush-portfolio-topaz.vercel.app/** (canonical short alias Vercel auto-assigned; the bare `piyush-portfolio.vercel.app` is someone ELSE's site that claimed that short name first — NOT this project). Domain `piyushgupta.io` is NOT yet attached. Content verified live via curl: shows "Piyush Gupta", "Slice", "jumpingMinds", "piyushguptaece" with zero "Aaabad Touk" leakage.
@@ -225,3 +241,44 @@ tags: [continuation, post-compact, resume]
 ## Snapshots
 
 > Auto-appended by `~/.claude/scripts/snapshot-continuation.py` (PreCompact hook). Don't edit manually.
+
+---
+
+## Snapshot · 2026-06-02T15:53:33Z · manual compact
+
+| Field | Value |
+|---|---|
+| Project root | `/Users/piyush/Workspace/ai-sdlc` |
+| Branch | `main` |
+| CWD | `/Users/piyush/Workspace/ai-sdlc` |
+| Session | `d2c84f0b-6e44-4d90-8743-e34ff416276c` |
+| Transcript | `/Users/piyush/.claude/projects/-Users-piyush-Workspace-ai-workspace/d2c84f0b-6e44-4d90-8743-e34ff416276c.jsonl` |
+
+### Git log (last 10)
+
+```
+3da988e docs(continuation): correct URL — site live at piyush-portfolio-topaz.vercel.app
+90cc508 Merge pull request #7 from piyushgupta27/docs/security-governance
+60233f2 docs(governance): enforce security as an SDLC aspect + fix approval to a human-review gate
+569ce10 Merge pull request #6 from piyushgupta27/fix/scope-agent-env
+071d84e fix(transport): allow proxy/CA passthrough in scoped agent env
+f07acc3 fix(transport): scope agent env to deny-by-default allow-list (security finding #1)
+3aa4edb Merge pull request #5 from piyushgupta27/docs/stage-0a-governance
+167c226 docs: Stage-0a governance + architecture + agent specs (+ verification record)
+a1c3064 Merge pull request #4 from piyushgupta27/fix/transport-agent-permissions
+70c2f82 fix(ci): re-run blast-radius on label changes
+```
+
+### Uncommitted changes
+
+```
+?? .audit/
+?? .gstack/
+?? docs/plans/checkpoint-2026-06-02-platform-security.md
+```
+
+### Task docs touched in last 7 days
+
+```
+(none in last 7 days)
+```
