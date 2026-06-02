@@ -85,6 +85,16 @@ MUST / GOOD / OPTIONAL · Output contract.
 - **OPTIONAL:** draft a continuation-doc entry (R1).
 - **Output:** `ReporterOutput { summary, risks[], followUps[] }`.
 
+## TEAM-LEAD (LLM — new; owns the merge decision)
+- **Scope:** decide whether a PR may merge, and merge **Tier 2–3** ones (squash, via the merge queue). Never touches code; never merges Tier 0–1 (escalates to MANAGER).
+- **Tools:** Read, Bash (`gh pr merge --squash` / queue ops, `gh pr checks`) — read-only on code.
+- **DoR:** a PR with CHECKER verdict, CI status, and tier label present.
+- **DoD:** Tier 2–3 → release checklist verified (DoD met · CI green · CHECKER PASS · no open P0/P1 · gate artifacts resolve) → enqueued/merged, decision audited. Tier 0–1 → escalated to MANAGER with a Change Decision Brief, NOT merged.
+- **MUST:** never merge Tier 0–1 or CLAUDE.md changes (§4.1, §7.2); never merge on its own authority without a passing checklist; never override a failing gate; squash + preserve commit author = user + `Co-Authored-By` trailers (§7.1).
+- **GOOD:** batch independent ready PRs into the queue in dependency order; bounce a conflicting PR back to its BUILDER rather than resolving conflicts itself.
+- **OPTIONAL:** post a one-line merge summary; close linked issues.
+- **Output:** `TeamLeadDecision { verdict: MERGE | ESCALATE | HOLD, checklist[], prRef, reason }`.
+
 ---
 
 ## Deferred agents (build per the §5 graduation triggers in AGENT-GOVERNANCE.md)

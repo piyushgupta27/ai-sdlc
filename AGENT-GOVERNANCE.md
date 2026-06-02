@@ -23,6 +23,7 @@ not a guideline.
 | TESTER | LLM agent | Derives + runs the test matrix; validates coverage. |
 | REVIEWER | LLM agent (generalist, v1) | Independent code review; runs a security pass when blast-radius warrants. |
 | **CHECKER** | LLM agent (**new, Stage 1**) | Independent handoff validator / L2 meta-checker (audits agent *output quality*). |
+| **TEAM-LEAD** | LLM agent (**new**) | Owns the merge decision: verifies the release checklist + gate artifacts, then merges **Tier 2–3** PRs (squash). **Escalates Tier 0–1 to MANAGER** — never merges Red-zone. |
 | REPORTER | LLM agent | Summarizes the run. |
 | _Specialized reviewers_ | _deferred_ | SECURITY / CODE-QUALITY / BUG / DESIGN / PERF — **not built yet** (see §5). |
 
@@ -117,6 +118,17 @@ agents sharing one checkout stomp each other. Therefore:
 
 This model is identical whether the clones sit on one laptop or many — **N independent
 trees, coordinating only through origin + PRs.**
+
+### 7.1 Merge strategy & multi-PR handling (standard)
+- **MUST — squash-and-merge is the default** for agent PRs. Each PR collapses to one atomic commit on `main`: clean history, easy revert, and the agent's BUILD→refire→fix churn never reaches `main`. Trade-off accepted: within-PR granularity is lost (mitigated by small, single-logical-change PRs, which task decomposition already enforces). **Per-repo override allowed** (e.g. `piyush-portfolio` uses rebase-and-merge by owner preference).
+- **MUST — commit author = the user** even under squash (GitHub sets the squash author to the PR author → contributions land on Piyush's graph). Preserve `Co-Authored-By` trailers in the squash message.
+- **MUST — multiple concurrent PRs go through a merge queue**, not manual serial rebases. The queue rebases + re-tests each PR against the latest `main` **in order, automatically**, and a PR that conflicts/fails is bounced back to its owning agent (BUILDER) to fix on its branch — it does not block the others. (Enabled on **public ai-sdlc**; needs branch protection, so private repos wait for Pro/public — until then, small PRs + frequent merges.)
+- **MUST — no stacked PRs** by default (squash rewrites break stacked bases); keep PRs independent and let the queue serialize them.
+
+### 7.2 Who merges (TEAM-LEAD vs MANAGER)
+- **TEAM-LEAD (agent)** owns merges for **Tier 2–3** PRs: verify the release checklist (DoD met, CI green, CHECKER PASS, no open P0/P1, gate artifacts present) → add to the merge queue. Records the decision in the audit log.
+- **MANAGER (Piyush)** gates **Tier 0–1** (Red-zone) — TEAM-LEAD **escalates, never merges** these. Approval is a human PR review (§4.1). CLAUDE.md changes always MANAGER-gated.
+- **Operational/continuation docs** (`CONTINUATION.md`, `tasks/session-*.md`, `tasks/continuation.md`, `docs/plans/*`) are **not** PR'd standalone — they **ride along in the next PR** that touches the repo (never a direct `main` push, never a dedicated PR). Decided 2026-06-02.
 
 ## 8. Change Decision Brief (the format for every MANAGER-gated change)
 - **Location** — file / module / path.
