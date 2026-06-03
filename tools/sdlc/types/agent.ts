@@ -7,6 +7,7 @@
  */
 
 import type { AgentRole, ModelId, ModelTransport } from './audit.js'
+import type { CheckerOutput, CheckerPayload } from './checker.js'
 import type { ProjectSlug } from './project.js'
 import type { Result } from './result.js'
 
@@ -171,6 +172,7 @@ export interface AgentTypeMap {
   builder: { payload: BuilderPayload; output: BuilderOutput }
   tester: { payload: TesterPayload; output: TesterOutput }
   reviewer: { payload: ReviewerPayload; output: ReviewerOutput }
+  checker: { payload: CheckerPayload; output: CheckerOutput }
   reporter: { payload: ReporterPayload; output: ReporterOutput }
 }
 
@@ -181,5 +183,5 @@ export interface AgentTypeMap {
 export type V1AgentRole = keyof AgentTypeMap
 
 export function isV1AgentRole(role: AgentRole): role is V1AgentRole {
-  return ['planner', 'builder', 'tester', 'reviewer', 'reporter'].includes(role)
+  return ['planner', 'builder', 'tester', 'reviewer', 'checker', 'reporter'].includes(role)
 }

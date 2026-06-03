@@ -61,8 +61,15 @@ describe('selectModel', () => {
     expect(r.model).toBe('claude-haiku-4-5-20251001')
   })
 
+  it('CHECKER uses Opus + temp 0.4 (independent semantic auditor)', () => {
+    const r = selectModel({ role: 'checker', tier: 2 })
+    expect(r.model).toBe('claude-opus-4-7')
+    expect(r.temperature).toBe(0.4)
+    expect(r.transport).toBe('claude-code-subagent')
+  })
+
   it('all routes use claude-code-subagent transport (Q-AI-2 amendment)', () => {
-    const roles = ['planner', 'builder', 'tester', 'reviewer', 'reporter'] as const
+    const roles = ['planner', 'builder', 'tester', 'reviewer', 'checker', 'reporter'] as const
     for (const role of roles) {
       const r = selectModel({ role, tier: 2 })
       expect(r.transport).toBe('claude-code-subagent')

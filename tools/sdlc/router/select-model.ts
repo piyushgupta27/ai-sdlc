@@ -5,11 +5,12 @@
  * Mitigation for anti-monoculture (since same family): temperature + cold-read
  * hostile-eye prompt + smaller AGGREGATOR (deferred to v1.5+).
  *
- * v1 routing (5 agents only):
+ * v1 routing:
  *   PLANNER   → opus 4.7 (heavy reasoning, low frequency)
  *   BUILDER   → sonnet 4.6 (fast, capable); opus 4.7 fallback on Tier 0/1 or retry
  *   TESTER    → sonnet 4.6
  *   REVIEWER  → opus 4.7 (hostile-eye prompt, temp 0.7)
+ *   CHECKER   → opus 4.7 (independent semantic auditor, temp 0.4)
  *   REPORTER  → haiku 4.5 (formulaic)
  */
 
@@ -97,6 +98,19 @@ export function selectModel(req: RouteRequest): ModelRoute {
         temperature: 0.7,
         reason:
           'REVIEWER → Opus + cold-read prompt + temp 0.7 (Q-AI-2 amended: Claude-on-Claude with hostile-eye mitigation)',
+      }
+
+    case 'checker':
+      // Independent semantic auditor (Stage 1). Opus for judgment; temp 0.4 —
+      // lower than REVIEWER's 0.7 because the CHECKER wants consistent, sober
+      // gate decisions, not divergent idea generation. Deterministic facts are
+      // re-run by the orchestrator (H1); this routes only the LLM audit pass.
+      return {
+        model: OPUS,
+        transport: SUBAGENT,
+        temperature: 0.4,
+        reason:
+          'CHECKER → Opus + temp 0.4 (independent semantic auditor; consistency over divergence)',
       }
 
     case 'reporter':
