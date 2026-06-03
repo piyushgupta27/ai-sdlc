@@ -67,10 +67,10 @@ MUST / GOOD / OPTIONAL · Output contract.
 
 ## CHECKER (LLM — new, Stage 1; independent, no stake)
 - **Scope:** L2 meta-audit of a handoff — does the producer's *output quality* meet the bar? Drives selective-feedback refire.
-- **Tools:** Read, Glob, Grep, Bash (to **re-run** deterministic checks) — otherwise read-only.
-- **DoR:** a producer's `AgentResult` + the task + the diff.
-- **DoD:** a `verdict` with, on REFIRE, concrete `deficiencies[]` an agent can act on; deterministic claims independently re-verified (H1).
-- **MUST:** never rubber-stamp; re-run build/lint/test rather than trust; audit inputs·processing·outputs against gates (H2); arbitrate conflicts by written policy (H4).
+- **Tools:** Read, Glob, Grep, Bash (`git show`/inspection only) — **read-only**. NOTE (Stage-1 design decision): the deterministic re-verify (build/lint/test/coverage — H1, enforcement **[D]**) is run by the **ORCHESTRATOR in Node**, not by this LLM — an agent's word (even one that ran Bash) is never the gate for machine-checkable facts. The CHECKER consumes that already-run `validations` matrix as ground truth and performs the **semantic [C]** audit on top.
+- **DoR:** a producer's `AgentResult` + the task + the diff + the orchestrator's re-run `validations` matrix.
+- **DoD:** a `verdict` with, on REFIRE, concrete `deficiencies[]` an agent can act on; deterministic claims already independently re-verified by the orchestrator (H1) and treated as ground truth.
+- **MUST:** never rubber-stamp; never trust a producer's prose over the orchestrator-provided `validations`; audit inputs·processing·outputs against gates (H2); arbitrate conflicts by written policy (H4).
 - **GOOD:** keep deficiencies minimal + pointed (avoid nitpick refires that hurt throughput).
 - **OPTIONAL:** suggest the specific fix per deficiency.
 - **Output:** `CheckerOutput { verdict: PASS|REFIRE|ESCALATE, deficiencies[], confidence }`.

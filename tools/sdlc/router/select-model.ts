@@ -99,6 +99,18 @@ export function selectModel(req: RouteRequest): ModelRoute {
           'REVIEWER → Opus + cold-read prompt + temp 0.7 (Q-AI-2 amended: Claude-on-Claude with hostile-eye mitigation)',
       }
 
+    case 'checker':
+      // Independent semantic auditor (Stage 1). Opus for judgment; temp 0.4 —
+      // lower than REVIEWER's 0.7 because the CHECKER wants consistent, sober
+      // gate decisions, not divergent idea generation. Deterministic facts are
+      // re-run by the orchestrator (H1); this routes only the LLM audit pass.
+      return {
+        model: OPUS,
+        transport: SUBAGENT,
+        temperature: 0.4,
+        reason: 'CHECKER → Opus + temp 0.4 (independent semantic auditor; consistency over divergence)',
+      }
+
     case 'reporter':
       return {
         model: HAIKU,

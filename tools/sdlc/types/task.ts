@@ -20,9 +20,26 @@ import type { ProjectSlug } from './project.js'
 export type Tier = 0 | 1 | 2 | 3 | 4
 
 /**
+ * Single shared severity rubric (AGENT-GOVERNANCE.md §6) — one scale every
+ * agent uses to classify findings/deficiencies, mapped to Tier:
+ * P0↔Tier0 (security/secrets/data-loss), P1↔Tier1 (arch/contracts/APIs),
+ * P2↔Tier2 (standard), P3↔Tier3-4 (cosmetic).
+ */
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
+
+/**
  * Pipeline stages — see ARCHITECTURE.md §5.
  */
-export type Stage = 'PLAN' | 'BUILD' | 'TEST' | 'REVIEW' | 'DEMO' | 'COMMIT' | 'REPORT' | 'DONE'
+export type Stage =
+  | 'PLAN'
+  | 'BUILD'
+  | 'TEST'
+  | 'REVIEW'
+  | 'CHECK' // CHECKER quality gate (Stage 1) — between REVIEW and COMMIT
+  | 'DEMO'
+  | 'COMMIT'
+  | 'REPORT'
+  | 'DONE'
 
 /**
  * Task outcome at any given moment.

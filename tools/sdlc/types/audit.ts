@@ -31,6 +31,7 @@ export type AgentRole =
   | 'builder'
   | 'tester'
   | 'reviewer' // v1 single generalist; v1.5+ adds the specialized roles below
+  | 'checker' // L2 meta-checker (Stage 1) — independent handoff quality audit
   | 'security-reviewer'
   | 'code-quality-reviewer'
   | 'bug-detector'
