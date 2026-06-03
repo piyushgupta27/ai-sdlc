@@ -283,12 +283,13 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
  *
  * Pure + exported so it can be unit-tested without spawning a process.
  */
-export function parseDispatchPayload(
-  stdout: string,
-): Result<
-  { rawText: string; tokens: { input: number; output: number; cacheRead?: number }; costUsd: number },
-  AppError
-> {
+export interface ParsedDispatch {
+  readonly rawText: string
+  readonly tokens: { readonly input: number; readonly output: number; readonly cacheRead?: number }
+  readonly costUsd: number
+}
+
+export function parseDispatchPayload(stdout: string): Result<ParsedDispatch, AppError> {
   let parsed: unknown
   try {
     parsed = JSON.parse(stdout)
