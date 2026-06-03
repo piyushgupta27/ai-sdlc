@@ -28,6 +28,27 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-04 — PR1 (F5) MERGED · CHECKER contracts (#28) + PR template (#29) open & reviewed · PR3 next
+
+**State:** On `main` @ `689535e` (PR #27 squash-merged). Node 22. Stage-1 Slice-1 in progress.
+- **MERGED — PR #27 (F5):** transport now parses real token usage + cost via `claude --print --output-format json` (was logging $0). The Red-zone gate worked end-to-end — branch protection BLOCKED the agent merge, required the MANAGER's `manager-approved` label, then merged clean. (Auto-merge is NOT enabled on the repo → label-then-manual-merge for now; Settings→General→Allow auto-merge would smooth this.)
+- **OPEN — PR #28 (CHECKER contracts, inert):** types/agent/prompt/route, additive, nothing dispatches it. `/code-review` done → applied 2 fixes (tightened `Deficiency.ownerRole` → new `DeficiencyOwner` = builder|tester|reviewer; fixed stale router header). CI green. Tier 1 → needs MANAGER label + merge.
+- **OPEN — PR #29 (MANAGER PR template, Tier 3, not Red-zone):** canonical `meta/templates/pull-request.md` + `.github/pull_request_template.md`. Iterated with MANAGER this session (clean style; §6 Audit clarified; §9 renamed to "Backlog"; Breaking/Rollback split). Green. Per delegation I can merge Tier-3 myself on MANAGER's go.
+
+**Decisions / process locked (full detail: `docs/checkpoints/2026-06-03-autonomous-sdlc-vision-and-milestone.md`):**
+- H1 deterministic re-verify runs in Node (orchestrator); CHECKER does the semantic audit only.
+- 3-tier gate ordering: completeness (Node, free) → deterministic re-run (Node) → semantic (CHECKER LLM) + SHA-cache.
+- MANAGER-grade PR template is the standard → propagate to all repos + enforce via a CI completeness gate (#26).
+- **LESSON:** run the FULL CI gate locally (`pnpm run check` = biome format + `test:coverage`), not just typecheck/lint/test — the format step failed #27/#28 in CI on first push. (Saved to memory.)
+
+**Up next (if "keep going"):** MANAGER applies `manager-approved` label to #28 → merge. Then **build PR3** — orchestrator wiring: 3-tier gate + bounded refire (`MAX_CHECKER_REFIRES=2`, reuse retry-policy) + F1 (populate `AuditRow.validations`/`decisions`) + live REFIRE→converge proof on a throwaway repo. PR3 must extend `writeStageAudit`/`nextStageAfter` to handle the new `'CHECK'` stage (the #28 review flagged they're hardcoded to the old stage set — PR3's job).
+
+**Open follow-ups (GH issues filed this session):** #24 tier-calibrated skip · #25 trusted evidence artifacts/sandbox · #26 PR-template propagation + CI completeness gate · #30 transport hardening (cost fallback, error diagnostics, JSON tolerance, cache_creation tokens) · #31 runtime-validate agent envelopes (zod, incl. CheckerOutput G3 version). Slice 2 = align `ReviewerOutput.findings` to the `Deficiency`/P0–P3 schema (the dual-rubric the #28 review flagged).
+
+**Uncommitted on disk (ride PR3):** this CONTINUATION entry + `docs/checkpoints/2026-06-03-autonomous-sdlc-vision-and-milestone.md` (vision/decision/roadmap checkpoint — untracked).
+
+**The "movie" the MANAGER wants:** full pipeline, many agents, parallel tasks, a CHECKER REFIRE→converge, an ESCALATE, a deterministic-gate catch. Needs PR3 + worktree isolation (#19) + TEAM-LEAD runtime + a seeded backlog (~4–5 PRs, ~2–4 sessions). Decided: build toward it (no teaser run).
+
 ### 2026-06-03 — Stage-1 CHECKER plan LOCKED · building Slice 1 as 3 PRs (PR1‖PR2 parallel)
 
 **State:** On `main` @ `9cb58f1`, Node 22, clean tree (only untracked `.audit/`, `.gstack/`, `docs/plans/stage-1-checker-kickoff.md`). Phase A green (typecheck clean, 31/31 tests, 1 pre-existing lint warning = F3 at dispatch.ts:465). Plan for Stage-1 Slice-1 (CHECKER + selective-feedback refire) is MANAGER-approved. Building now.
