@@ -17,11 +17,19 @@
  * P0–P3 rubric (`Priority`, AGENT-GOVERNANCE.md §6).
  */
 
-import type { AgentRole, AuditValidations } from './audit.js'
+import type { AuditValidations } from './audit.js'
 import type { Priority } from './task.js'
 
 /** Contract version — bump on any breaking change to CheckerOutput (G3). */
 export const CHECKER_CONTRACT_VERSION = 'checker/v1' as const
+
+/**
+ * Roles a deficiency can be assigned to — the producers in the BUILD→TEST→REVIEW
+ * loop that a refire can target. Narrower than `AgentRole` on purpose: a gap that
+ * no single producer can own (e.g. ambiguous AC) is an ESCALATE, not a REFIRE.
+ * Widen (it's versioned) only when a new refireable producer is added.
+ */
+export type DeficiencyOwner = 'builder' | 'tester' | 'reviewer'
 
 /**
  * CHECKER verdict on a handoff:
@@ -38,8 +46,8 @@ export type CheckerVerdict = 'PASS' | 'REFIRE' | 'ESCALATE'
  * of a refire. Keep these minimal; nitpick refires hurt throughput.
  */
 export interface Deficiency {
-  /** Which agent must fix it (drives selective refire). */
-  readonly ownerRole: AgentRole
+  /** Which producer must fix it (drives selective refire). */
+  readonly ownerRole: DeficiencyOwner
   /** Severity on the single shared P0–P3 rubric. */
   readonly severity: Priority
   /** The gap, concretely. */
