@@ -39,6 +39,17 @@ export interface ProjectConfig {
   readonly visibility: 'public' | 'private'
   /** When this project was onboarded */
   readonly onboardedAt: string
+  /**
+   * Deterministic checks the CHECKER gate re-runs (H1, [D]). Shell strings run
+   * in `repoPath`; exit 0 = pass. Omit a check (or the whole object) to skip it —
+   * a project with no commands yields an empty validations matrix, not a failure.
+   * Example: `{ typecheck: 'pnpm run typecheck', lint: 'pnpm run lint', test: 'pnpm test' }`.
+   */
+  readonly validationCommands?: {
+    readonly typecheck?: string
+    readonly lint?: string
+    readonly test?: string
+  }
 }
 
 /**
