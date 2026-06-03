@@ -28,6 +28,30 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-03 — Stage-1 CHECKER plan LOCKED · building Slice 1 as 3 PRs (PR1‖PR2 parallel)
+
+**State:** On `main` @ `9cb58f1`, Node 22, clean tree (only untracked `.audit/`, `.gstack/`, `docs/plans/stage-1-checker-kickoff.md`). Phase A green (typecheck clean, 31/31 tests, 1 pre-existing lint warning = F3 at dispatch.ts:465). Plan for Stage-1 Slice-1 (CHECKER + selective-feedback refire) is MANAGER-approved. Building now.
+
+**Design decisions locked with MANAGER this session:**
+- **H1 deterministic re-verify runs in Node (orchestrator), NOT in the CHECKER LLM.** An LLM-with-Bash reporting "tests pass" is still an agent's word; the `[D]` gate must be a real machine run. CHECKER (LLM) does the semantic `[C]` audit only. (Deviates from AGENT-SPECS.md §CHECKER stub — I update that stub in PR2.)
+- **3-tier gate ordering (cheap→expensive), from MANAGER's evidence idea:** (1) handoff-completeness check (Node, ~free — REFIRE incomplete evidence before any run/LLM, enforces E1/O3/O5); (2) deterministic re-verify (Node, once, authoritative — H1, closes F1); (3) semantic audit (CHECKER LLM — H2/H3). Plus SHA-cache to avoid redundant re-runs in the refire loop.
+- **Agent-supplied evidence can't replace re-running deterministic facts today** (single-process; agent evidence is forgeable text). True evidence-based skip needs a sandbox harness emitting signed commit-bound artifacts → filed #25.
+- **Tier-calibrated skip of the re-run = DEFERRED** with measurable graduation trigger → filed #24 (not left as prose).
+- **MAX_CHECKER_REFIRES = 2** (small, to protect throughput — "reserve for substantive gaps").
+
+**PR decomposition (all 3 touch Tier-1 Red-zone → ALL need MANAGER review; agent never self-merges):**
+- **PR1 — F5 transport fix** (`router/claude-code-subagent.ts` + `agents/base.ts`): switch to `claude --print --output-format json`, parse real `usage` tokens + `total_cost_usd` (verified the envelope shape live), replacing the broken stderr regex that returns 0. Threads accurate cost through DispatchResponse→base. Unit-tested.
+- **PR2 — CHECKER contracts + agent + prompt** (`types/checker.ts` new, `types/audit.ts` AgentRole+='checker', `types/task.ts` Priority P0–P3 + Stage+='CHECK', `types/agent.ts` AgentTypeMap+isV1AgentRole, `router/select-model.ts` checker route Opus temp 0.4, `agents/checker/index.ts`, `prompts/checker/v1.md`). Ships **inert** (tested, not wired). File-disjoint from PR1.
+- **PR3 — orchestrator wiring + F1 + live proof** (`orchestrator/index.ts`, new `orchestrator/validations.ts`, `retry-policy.ts` shouldRefire+MAX_CHECKER_REFIRES, `types/project.ts` validationCommands, builder/tester/reviewer payloads+prompts get `deficiencies?`). The 3-tier gate + bounded refire loop + audit `{feedback-in, what-changed}` + live REFIRE→converge proof on a throwaway `/tmp` repo. **Waits for PR2 merge** (no stacked PRs).
+
+**Parallelization:** PR1 ‖ PR2 built concurrently via 2 worktree-isolated sub-agents (dogfoods §7). PR3 after PR2 merges.
+
+**Up next (if "keep going"):** verify both sub-agent PRs (gates green, diffs sane), post both PR links, WAIT for MANAGER review/merge. Then build PR3 after PR2 lands.
+
+**Open follow-ups:** #24 (tier-calibrated skip), #25 (trusted evidence artifacts/sandbox), #21 (autonomy 3/5 = this CHECKER+TEAM-LEAD work). F3 lint warning (cosmetic) can ride PR3.
+
+**Reference docs:** `docs/plans/stage-1-checker-kickoff.md`, `docs/plans/2026-05-31-aisdlc-maturity-plan.md`, `AGENT-GOVERNANCE.md`, `SDLC-ARCHITECTURE.md §3`, `AGENT-SPECS.md §CHECKER`.
+
 ### 2026-06-02 (late) — Merge-strategy standard + TEAM-LEAD shipped (PR #18) · Stage-1 CHECKER is next · HANDOFF
 
 **State (workstream B — platform/security/process; not piyush-portfolio):** Runway-clearing is essentially DONE. Next real feature = **Stage 1: build the CHECKER**. Full kickoff prompt for a fresh conversation: **`docs/plans/stage-1-checker-kickoff.md`** (read it + `docs/plans/2026-05-31-aisdlc-maturity-plan.md` + `AGENT-GOVERNANCE.md`).
