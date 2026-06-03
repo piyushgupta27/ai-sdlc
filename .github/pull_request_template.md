@@ -79,7 +79,9 @@ _AI-SDLC; auto-filled for pipeline runs._ Audit run IDs · agents + prompt cohor
 
 ## 9 · Follow-ups
 
-Filed — #<n> #<n> (or none).
+**Future backlog** (deferred work, filed as issues — or "none")
+- [Issue #<n>](<url>): <brief one-line description>
+- [Issue #<n>](<url>): <brief one-line description>
 
 ## 10 · Post-merge
 
