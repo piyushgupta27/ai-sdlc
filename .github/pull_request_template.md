@@ -77,9 +77,9 @@ _AI-SDLC; auto-filled for pipeline runs._ Audit run IDs · agents + prompt cohor
 
 **Your call** — <the specific judgment(s) needed from the MANAGER>.
 
-## 9 · Follow-ups
+## 9 · Backlog
 
-**Future backlog** (deferred work, filed as issues — or "none")
+_Deferred work, filed as issues (or "none")._
 - [Issue #<n>](<url>): <brief one-line description>
 - [Issue #<n>](<url>): <brief one-line description>
 
