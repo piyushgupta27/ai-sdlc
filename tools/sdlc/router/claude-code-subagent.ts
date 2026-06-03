@@ -48,6 +48,12 @@ export interface DispatchResponse {
   }
   readonly durationMs: number
   readonly exitCode: number
+  /**
+   * Real cost in USD as reported by the CLI (`total_cost_usd`). The base
+   * layer prefers this over the local token-based estimate when present.
+   * Optional because non-JSON / error paths may not carry it.
+   */
+  readonly costUsd?: number
 }
 
 /**
@@ -141,6 +147,12 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
     return new Promise((resolve) => {
       const args = [
         '--print',
+        // Structured output: stdout is ONE JSON envelope whose `result` field
+        // holds the agent's text answer, plus exact token usage + real cost
+        // under `usage` / `total_cost_usd`. Replaces the old stderr regex that
+        // matched nothing in the current CLI and logged 0 tokens / $0 (F5).
+        '--output-format',
+        'json',
         '--model',
         opts.model,
         // Agents run non-interactively (--print): there is no human to answer
@@ -236,16 +248,23 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
           return
         }
 
-        // Best-effort token parsing from stderr if Claude Code emits usage hints.
-        // For v1 we report 0s if parsing fails; the audit row still goes through.
-        const tokens = parseTokenUsage(stderr)
+        // Parse the structured JSON envelope (--output-format json). The agent's
+        // text answer is `result`; token usage + real cost come from the same
+        // envelope (F5). A malformed/error envelope is a hard failure here — we
+        // never silently fall back to 0-token rows.
+        const payload = parseDispatchPayload(stdout)
+        if (!payload.ok) {
+          resolve(payload)
+          return
+        }
 
         resolve(
           ok({
-            rawText: stdout.trim(),
-            tokens,
+            rawText: payload.value.rawText,
+            tokens: payload.value.tokens,
             durationMs,
             exitCode: 0,
+            costUsd: payload.value.costUsd,
           }),
         )
       })
@@ -254,22 +273,93 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
 }
 
 /**
- * Best-effort token-count extraction from claude CLI stderr.
+ * Parse the `claude --print --output-format json` stdout envelope.
  *
- * Different versions of the CLI may or may not emit usage info; we don't
- * fail if it's absent. The audit log still gets a row with 0 tokens — better
- * than no row at all.
+ * The CLI prints ONE JSON object whose `result` field holds the agent's text
+ * answer, with exact token usage under `usage` and real cost under
+ * `total_cost_usd`. This replaces the old best-effort stderr regex (finding
+ * F5), which matched nothing in the current CLI and logged every run as 0
+ * tokens / $0 — breaking the cost audit (G4) and per-agent budgets (G5).
+ *
+ * Pure + exported so it can be unit-tested without spawning a process.
  */
-function parseTokenUsage(stderr: string): DispatchResponse['tokens'] {
-  const inputMatch = stderr.match(/input[:\s]+(\d+)\s*tokens?/i)
-  const outputMatch = stderr.match(/output[:\s]+(\d+)\s*tokens?/i)
-  const cacheMatch = stderr.match(/cache[:\s]+(\d+)\s*tokens?/i)
+export interface ParsedDispatch {
+  readonly rawText: string
+  readonly tokens: { readonly input: number; readonly output: number; readonly cacheRead?: number }
+  readonly costUsd: number
+}
 
-  return {
-    input: inputMatch ? Number.parseInt(inputMatch[1] ?? '0', 10) : 0,
-    output: outputMatch ? Number.parseInt(outputMatch[1] ?? '0', 10) : 0,
-    ...(cacheMatch ? { cacheRead: Number.parseInt(cacheMatch[1] ?? '0', 10) } : {}),
+export function parseDispatchPayload(stdout: string): Result<ParsedDispatch, AppError> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch (cause) {
+    return err(
+      makeError(
+        'subagent.invalid-json',
+        'claude CLI did not emit valid JSON (expected --output-format json)',
+        {
+          cause: {
+            stdout: stdout.slice(0, 800),
+            parseError: cause instanceof Error ? cause.message : String(cause),
+          },
+          fix: 'Ensure the spawned claude CLI supports `--output-format json`; inspect the captured stdout.',
+        },
+      ),
+    )
   }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    return err(
+      makeError('subagent.invalid-json', 'claude CLI JSON output was not an object', {
+        cause: { stdout: stdout.slice(0, 800) },
+      }),
+    )
+  }
+
+  const env = parsed as {
+    is_error?: boolean
+    result?: unknown
+    total_cost_usd?: unknown
+    usage?: {
+      input_tokens?: unknown
+      output_tokens?: unknown
+      cache_read_input_tokens?: unknown
+    }
+  }
+
+  if (env.is_error === true) {
+    return err(
+      makeError('subagent.cli-error', 'claude CLI reported is_error=true', {
+        cause: {
+          result: typeof env.result === 'string' ? env.result.slice(0, 800) : env.result,
+        },
+        fix: 'Inspect the CLI error; common causes: rate-limited, auth expired, invalid model id.',
+      }),
+    )
+  }
+
+  if (typeof env.result !== 'string') {
+    return err(
+      makeError('subagent.invalid-json', 'claude CLI JSON envelope missing string `result` field', {
+        cause: { stdout: stdout.slice(0, 800) },
+      }),
+    )
+  }
+
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const usage = env.usage ?? {}
+  const cacheRead = num(usage.cache_read_input_tokens)
+
+  return ok({
+    rawText: env.result,
+    tokens: {
+      input: num(usage.input_tokens),
+      output: num(usage.output_tokens),
+      ...(cacheRead > 0 ? { cacheRead } : {}),
+    },
+    costUsd: num(env.total_cost_usd),
+  })
 }
 
 /**

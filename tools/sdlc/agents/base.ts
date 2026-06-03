@@ -255,7 +255,9 @@ function makeAgentResult<TOutput>(
     ...(envelope.notes ? { notes: envelope.notes } : {}),
     tokens: dispatch.tokens,
     durationMs: dispatch.durationMs,
-    costUsd: estimateCost(model, dispatch.tokens),
+    // Prefer the CLI's real reported cost (F5); fall back to the local
+    // token-based estimate if the transport didn't surface one.
+    costUsd: dispatch.costUsd ?? estimateCost(model, dispatch.tokens),
     model,
     transport,
   }
