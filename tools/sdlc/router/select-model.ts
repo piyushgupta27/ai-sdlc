@@ -108,7 +108,8 @@ export function selectModel(req: RouteRequest): ModelRoute {
         model: OPUS,
         transport: SUBAGENT,
         temperature: 0.4,
-        reason: 'CHECKER → Opus + temp 0.4 (independent semantic auditor; consistency over divergence)',
+        reason:
+          'CHECKER → Opus + temp 0.4 (independent semantic auditor; consistency over divergence)',
       }
 
     case 'reporter':
