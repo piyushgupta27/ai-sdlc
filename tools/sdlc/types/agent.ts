@@ -10,6 +10,7 @@ import type { AgentRole, ModelId, ModelTransport } from './audit.js'
 import type { CheckerOutput, CheckerPayload } from './checker.js'
 import type { ProjectSlug } from './project.js'
 import type { Result } from './result.js'
+import type { Priority } from './task.js'
 
 /**
  * Brief = the input contract for an agent run.
@@ -138,17 +139,32 @@ export interface ReviewerPayload {
   readonly tier: number
 }
 
+/**
+ * A single REVIEWER finding (Slice 2: aligned to the `Deficiency` schema).
+ * Severity uses the single shared **P0–P3** rubric (was low|med|high|critical) so
+ * the CHECKER and any downstream merge/threshold logic consume REVIEWER findings
+ * and CHECKER deficiencies uniformly. `evidenceRef` mirrors `Deficiency.evidenceRef`.
+ */
+export interface ReviewFinding {
+  /** Shared P0–P3 rubric (AGENT-GOVERNANCE.md §6). */
+  readonly severity: Priority
+  readonly file: string
+  readonly line: number
+  /** One-line summary (dashboard). */
+  readonly summary: string
+  /** 2-liner with context. */
+  readonly detail: string
+  /** Resolvable evidence: `file:line`, `command (exit N)`, or a repro — like a Deficiency. */
+  readonly evidenceRef: string
+  readonly suggestedFix?: string
+  /** Lifecycle across refire iterations. */
+  readonly status?: 'open' | 'resolved'
+}
+
 export interface ReviewerOutput {
   readonly verdict: 'PASS' | 'CHANGES_REQUESTED' | 'FAIL' | 'BLOCK'
   readonly confidence: number
-  readonly findings: ReadonlyArray<{
-    readonly file: string
-    readonly line: number
-    readonly severity: 'low' | 'medium' | 'high' | 'critical'
-    readonly summary: string
-    readonly description: string
-    readonly suggestedFix?: string
-  }>
+  readonly findings: readonly ReviewFinding[]
 }
 
 export interface ReporterPayload {

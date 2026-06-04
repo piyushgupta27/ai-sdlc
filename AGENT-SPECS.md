@@ -63,7 +63,7 @@ MUST / GOOD / OPTIONAL · Output contract.
 - **MUST:** producer ≠ reviewer (independence); never approve own work; flag any open P0/P1 as blocking; false-positive sweep (O2).
 - **GOOD:** cite `PRINCIPLES.md`/`SAFETY.md` invariants checked.
 - **OPTIONAL:** suggest fixes inline.
-- **Output:** `ReviewerOutput { verdict: PASS|CHANGES_REQUESTED|FAIL|BLOCK, findings[], confidence }` (findings extended to the rich schema — Stage-1 slice 2).
+- **Output:** `ReviewerOutput { verdict: PASS|CHANGES_REQUESTED|FAIL|BLOCK, findings: ReviewFinding[], confidence }` — `ReviewFinding` uses the shared **P0–P3** rubric + `evidenceRef` (Slice 2 done), aligned with the CHECKER's `Deficiency`.
 
 ## CHECKER (LLM — new, Stage 1; independent, no stake)
 - **Scope:** L2 meta-audit of a handoff — does the producer's *output quality* meet the bar? Drives selective-feedback refire.

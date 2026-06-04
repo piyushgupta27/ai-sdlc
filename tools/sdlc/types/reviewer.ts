@@ -6,6 +6,7 @@
  */
 
 import type { AgentRole } from './audit.js'
+import type { Priority } from './task.js'
 
 /**
  * Per-reviewer verdict.
@@ -13,12 +14,10 @@ import type { AgentRole } from './audit.js'
 export type ReviewerVerdict = 'PASS' | 'CHANGES_REQUESTED' | 'FAIL' | 'BLOCK'
 
 /**
- * Severity scale for individual findings.
- */
-export type Severity = 'low' | 'medium' | 'high' | 'critical'
-
-/**
- * A single finding from a reviewer.
+ * A single finding from a reviewer (deferred fleet variant — richer than the v1
+ * `ReviewFinding` in `agent.ts`, adding range/references/cohort for AGGREGATOR).
+ * Severity uses the single shared **P0–P3** rubric (Slice 2 unified this; the old
+ * `Severity = low|med|high|critical` type is retired — see `Priority` in task.ts).
  */
 export interface ReviewerFinding {
   /** File path relative to target repo */
@@ -27,8 +26,8 @@ export interface ReviewerFinding {
   readonly line: number
   /** Optional end line (for range findings) */
   readonly endLine?: number
-  /** Severity level */
-  readonly severity: Severity
+  /** Severity on the shared P0–P3 rubric */
+  readonly severity: Priority
   /** One-line summary shown in dashboard */
   readonly summary: string
   /** Longer description with context + suggested fix */
