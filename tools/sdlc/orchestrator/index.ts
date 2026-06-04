@@ -21,6 +21,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { runBuilder } from '../agents/builder/index.js'
+import { runChecker } from '../agents/checker/index.js'
 import { runReporter } from '../agents/reporter/index.js'
 import { runReviewer } from '../agents/reviewer/index.js'
 import { runTester } from '../agents/tester/index.js'
@@ -28,11 +29,19 @@ import { notify } from '../integrations/ntfy.js'
 import { estimateCost } from '../router/select-model.js'
 import {
   type AppError,
+  type AuditDecision,
   type AuditRow,
+  type AuditValidations,
+  type BuilderOutput,
+  type CheckerOutput,
+  type Deficiency,
+  type DeficiencyOwner,
   type ProjectSlug,
   type Result,
+  type ReviewerOutput,
   type Stage,
   type Task,
+  type TesterOutput,
   type Tier,
   asProjectSlug,
   err,
@@ -42,9 +51,10 @@ import {
 } from '../types/index.js'
 import { writeAuditRow } from './audit-log.js'
 import { buildG2Request, enqueue } from './hitl-queue.js'
-import { shouldRetry } from './retry-policy.js'
+import { shouldRefire, shouldRetry } from './retry-policy.js'
 import { projectDir } from './state.js'
 import { readState, updateState } from './state.js'
+import { type ValidationCommands, hasDeterministicFailure, runValidations } from './validations.js'
 
 /**
  * Outcome of running ONE task end-to-end through the pipeline.
@@ -250,8 +260,22 @@ export async function runTask(opts: {
     const decision = shouldRetry(reviewOutput.verdict, retriesUsed, tier)
 
     if (decision.action === 'pass') {
-      // REVIEW passed — proceed to COMMIT + REPORT
-      return await finalizeSuccess(opts, buildOutput, auditRunIds, totalCost, start, retriesUsed)
+      // REVIEW passed the OUTCOME-based loop. Now the QUALITY gate (CHECKER +
+      // deterministic re-run) decides COMMIT vs a bounded, selective refire.
+      return await runCheckGate({
+        project: opts.project,
+        task: opts.task,
+        targetRepo: opts.targetRepo,
+        branch: opts.branch,
+        tier,
+        buildOutput,
+        testOutput: testResult.value.output as TesterOutput,
+        reviewOutput: reviewResult.value.output as ReviewerOutput,
+        auditRunIds,
+        totalCost,
+        start,
+        retriesUsed,
+      })
     }
 
     if (decision.action === 'retry') {
@@ -275,11 +299,374 @@ export async function runTask(opts: {
   return err(makeError('orchestrator.unreachable', 'Iteration loop exited without verdict', {}))
 }
 
+// ─── CHECKER quality gate (Stage 1) ──────────────────────────────────────
+
+/**
+ * Mutable context threaded through the CHECK gate. `*Output` + `totalCost`
+ * change across refire iterations; the rest is fixed for the task.
+ */
+interface CheckGateCtx {
+  readonly project: ProjectSlug
+  readonly task: Task
+  readonly targetRepo: string
+  readonly branch: string
+  readonly tier: Tier
+  buildOutput: BuilderOutput
+  testOutput: TesterOutput
+  reviewOutput: ReviewerOutput
+  readonly auditRunIds: string[]
+  totalCost: number
+  readonly start: number
+  readonly retriesUsed: number
+}
+
+/**
+ * The quality gate, run after REVIEW passes the outcome loop. Bounded loop (H5):
+ *   1. deterministic re-verify in Node (H1, [D]) — never trust the producer's word
+ *   2. CHECKER semantic audit ([C])
+ *   3. shouldRefire → PASS=COMMIT · REFIRE=selective refire of the owning producer ·
+ *      ESCALATE / non-convergence = HITL (G2)
+ * Each iteration writes a CHECK AuditRow with the deterministic matrix (closes F1)
+ * and the {feedback-in, what-changed} decision log.
+ */
+async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, AppError>> {
+  const opts = {
+    project: ctx.project,
+    task: ctx.task,
+    targetRepo: ctx.targetRepo,
+    branch: ctx.branch,
+  }
+  const commands = await loadValidationCommands(ctx.project)
+  const refireHistory: AuditDecision[] = []
+  let priorDeficiencies: Deficiency[] = []
+  let refiresUsed = 0
+
+  for (;;) {
+    // (1) deterministic re-verify — H1 [D]
+    const { validations, details } = await runValidations(ctx.targetRepo, commands)
+    const detFailed = hasDeterministicFailure(validations)
+
+    // (2) CHECKER semantic audit — [C]
+    const checkerResult = await runChecker({
+      project: ctx.project,
+      taskId: ctx.task.id,
+      targetRepo: ctx.targetRepo,
+      payload: {
+        taskId: ctx.task.id,
+        tier: ctx.tier,
+        acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
+        commitShas: [ctx.buildOutput.commitSha, ctx.testOutput.testCommitSha].filter((s) => !!s),
+        ...(ctx.buildOutput.diffPath ? { diffPath: ctx.buildOutput.diffPath } : {}),
+        validations,
+        producerSummary: buildProducerSummary(
+          ctx.buildOutput,
+          ctx.testOutput,
+          ctx.reviewOutput,
+          details,
+        ),
+        ...(priorDeficiencies.length ? { priorDeficiencies } : {}),
+      },
+    })
+    if (!checkerResult.ok) {
+      // The gate itself couldn't run — fail loudly, never silently pass.
+      return await finalizeFailure(
+        opts,
+        checkerResult.error,
+        ctx.auditRunIds,
+        ctx.totalCost,
+        ctx.start,
+        ctx.retriesUsed,
+      )
+    }
+    ctx.totalCost += checkerResult.value.costUsd
+    const checkerOut = checkerResult.value.output as CheckerOutput
+    const deficiencies = checkerOut.deficiencies ?? []
+    const decision = shouldRefire(checkerOut.verdict, detFailed, refiresUsed)
+
+    // audit this CHECK iteration (F1: validations + decision log)
+    const checkAuditId = await writeStageAudit(
+      opts,
+      'CHECK',
+      {
+        outcome:
+          decision.action === 'pass'
+            ? 'success'
+            : decision.action === 'escalate'
+              ? 'escalated'
+              : 'partial',
+        tokens: checkerResult.value.tokens,
+        durationMs: checkerResult.value.durationMs,
+        costUsd: checkerResult.value.costUsd,
+        model: checkerResult.value.model,
+        transport: checkerResult.value.transport,
+        filesRead: checkerResult.value.filesRead,
+        notes: `CHECKER ${checkerOut.verdict} (conf ${checkerOut.confidence}) — ${decision.reason}; deterministic: ${summarizeValidations(validations)}`,
+      },
+      ctx.tier,
+      ctx.retriesUsed,
+      {
+        validations,
+        decisions: [
+          {
+            what: `CHECKER ${checkerOut.verdict} → ${decision.action}`,
+            why: decision.reason,
+          },
+          ...refireHistory,
+        ],
+      },
+    )
+    if (checkAuditId) ctx.auditRunIds.push(checkAuditId)
+
+    if (decision.action === 'pass') {
+      return await finalizeSuccess(
+        opts,
+        ctx.buildOutput,
+        ctx.auditRunIds,
+        ctx.totalCost,
+        ctx.start,
+        ctx.retriesUsed,
+      )
+    }
+
+    if (decision.action === 'escalate') {
+      return await escalateCheckGate(opts, deficiencies, decision.reason, ctx)
+    }
+
+    // action === 'refire'. If the CHECKER didn't pin an owner but a deterministic
+    // check failed, default the fix to BUILDER. No actionable owner → escalate.
+    const actionable = deficiencies.length
+      ? deficiencies
+      : detFailed
+        ? [syntheticBuildDeficiency(validations)]
+        : []
+    if (!actionable.length) {
+      return await escalateCheckGate(
+        opts,
+        deficiencies,
+        'REFIRE with no actionable deficiency',
+        ctx,
+      )
+    }
+
+    const refire = await refireOwningProducers(ctx, opts, actionable)
+    if (!refire.ok) {
+      return await finalizeFailure(
+        opts,
+        refire.error,
+        ctx.auditRunIds,
+        ctx.totalCost,
+        ctx.start,
+        ctx.retriesUsed,
+      )
+    }
+    // {feedback-in, what-changed} for the NEXT iteration's audit row (H5)
+    refireHistory.unshift({
+      what: `refire #${refiresUsed + 1} in: ${actionable.map((d) => `${d.ownerRole}/${d.severity}: ${d.what}`).join(' | ')}`,
+      why: `what changed: ${refire.value.whatChanged}`,
+    })
+    priorDeficiencies = [...actionable]
+    refiresUsed++
+  }
+}
+
+/** Re-dispatch the owning producer(s) with ONLY their deficiencies, in pipeline order. */
+async function refireOwningProducers(
+  ctx: CheckGateCtx,
+  opts: { project: ProjectSlug; task: Task; targetRepo: string; branch: string },
+  deficiencies: readonly Deficiency[],
+): Promise<Result<{ whatChanged: string }, AppError>> {
+  const byOwner = new Map<DeficiencyOwner, Deficiency[]>()
+  for (const d of deficiencies) {
+    const list = byOwner.get(d.ownerRole) ?? []
+    list.push(d)
+    byOwner.set(d.ownerRole, list)
+  }
+  const changes: string[] = []
+  const order: DeficiencyOwner[] = ['builder', 'tester', 'reviewer']
+
+  for (const role of order) {
+    const defs = byOwner.get(role)
+    if (!defs?.length) continue
+
+    if (role === 'builder') {
+      const r = await runBuilder(
+        {
+          project: ctx.project,
+          taskId: ctx.task.id,
+          targetRepo: ctx.targetRepo,
+          payload: {
+            taskId: ctx.task.id,
+            taskDescription: ctx.task.description,
+            acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
+            tier: ctx.tier,
+            branch: ctx.branch,
+            deficiencies: defs,
+          },
+        },
+        { isRetry: true },
+      )
+      if (!r.ok) return r
+      ctx.totalCost += r.value.costUsd
+      const id = await writeStageAudit(opts, 'BUILD', r.value, ctx.tier, ctx.retriesUsed)
+      if (id) ctx.auditRunIds.push(id)
+      if (r.value.outcome === 'success') {
+        ctx.buildOutput = r.value.output as BuilderOutput
+        changes.push(`BUILDER → ${ctx.buildOutput.commitSha || '(no commit)'}`)
+      } else {
+        changes.push(`BUILDER outcome=${r.value.outcome}`)
+      }
+    } else if (role === 'tester') {
+      const r = await runTester(
+        {
+          project: ctx.project,
+          taskId: ctx.task.id,
+          targetRepo: ctx.targetRepo,
+          payload: {
+            taskId: ctx.task.id,
+            commitSha: ctx.buildOutput.commitSha,
+            acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
+            coverageFloor: ctx.task.dod.coverageFloor,
+            deficiencies: defs,
+          },
+        },
+        { tier: ctx.tier, isRetry: true },
+      )
+      if (!r.ok) return r
+      ctx.totalCost += r.value.costUsd
+      const id = await writeStageAudit(opts, 'TEST', r.value, ctx.tier, ctx.retriesUsed)
+      if (id) ctx.auditRunIds.push(id)
+      if (r.value.outcome === 'success' || r.value.outcome === 'partial') {
+        ctx.testOutput = r.value.output as TesterOutput
+        changes.push(`TESTER → ${ctx.testOutput.testCommitSha || '(no commit)'}`)
+      } else {
+        changes.push(`TESTER outcome=${r.value.outcome}`)
+      }
+    } else {
+      const r = await runReviewer({
+        project: ctx.project,
+        taskId: ctx.task.id,
+        targetRepo: ctx.targetRepo,
+        payload: {
+          taskId: ctx.task.id,
+          commitShas: [ctx.buildOutput.commitSha, ctx.testOutput.testCommitSha].filter((s) => !!s),
+          acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
+          tier: ctx.tier,
+          deficiencies: defs,
+        },
+      })
+      if (!r.ok) return r
+      ctx.totalCost += r.value.costUsd
+      const id = await writeStageAudit(opts, 'REVIEW', r.value, ctx.tier, ctx.retriesUsed)
+      if (id) ctx.auditRunIds.push(id)
+      ctx.reviewOutput = r.value.output as ReviewerOutput
+      changes.push(`REVIEWER → ${ctx.reviewOutput.verdict}`)
+    }
+  }
+
+  return ok({ whatChanged: changes.join('; ') || 'no producer change reported' })
+}
+
+/** G2 escalation from the CHECK gate — carries the deficiency history for the MANAGER. */
+async function escalateCheckGate(
+  opts: { project: ProjectSlug; task: Task; targetRepo: string },
+  deficiencies: readonly Deficiency[],
+  reason: string,
+  ctx: CheckGateCtx,
+): Promise<Result<TaskRunOutcome, AppError>> {
+  const defSummary = deficiencies.length
+    ? deficiencies
+        .map((d) => `[${d.severity} ${d.ownerRole}] ${d.what} (${d.evidenceRef})`)
+        .join('\n')
+    : '(no deficiencies pinned)'
+  const request = buildG2Request({
+    project: opts.project,
+    taskId: opts.task.id,
+    epicId: opts.task.epicId,
+    tier: opts.task.tier,
+    summary: `${opts.task.title} — CHECKER gate escalation`,
+    reason: `${reason}\n\nDeficiencies:\n${defSummary}`,
+    diffPath: `.audit/${todayUtc()}/diffs/${opts.task.id}.diff`,
+    reviewReportPath: `.audit/${todayUtc()}/review/${opts.task.id}.json`,
+    auditRunPath: `.audit/${todayUtc()}/runs`,
+    blockingTaskIds: opts.task.blocks,
+  })
+  const enqueueResult = await enqueue(opts.targetRepo, request)
+  if (!enqueueResult.ok) return enqueueResult
+
+  await updateState(opts.project, (s) => ({
+    ...s,
+    inFlightTaskIds: s.inFlightTaskIds.filter((id) => id !== opts.task.id),
+    hitlQueueDepth: s.hitlQueueDepth + 1,
+  }))
+
+  return ok({
+    taskId: opts.task.id,
+    result: 'hitl-pending',
+    stage: 'BLOCKED',
+    retriesUsed: ctx.retriesUsed,
+    auditRunIds: ctx.auditRunIds,
+    costUsd: ctx.totalCost,
+    durationMs: performance.now() - ctx.start,
+    notes: `CHECKER gate escalated: ${reason}`,
+  })
+}
+
+/** Load the per-project deterministic commands the gate re-runs (H1). */
+async function loadValidationCommands(
+  project: ProjectSlug,
+): Promise<ValidationCommands | undefined> {
+  try {
+    const cfgPath = join(projectDir(project), 'config.json')
+    if (!existsSync(cfgPath)) return undefined
+    const cfg = JSON.parse(await readFile(cfgPath, 'utf8')) as {
+      validationCommands?: ValidationCommands
+    }
+    return cfg.validationCommands
+  } catch {
+    return undefined
+  }
+}
+
+function buildProducerSummary(
+  build: BuilderOutput,
+  test: TesterOutput,
+  review: ReviewerOutput,
+  details: readonly { check: string; result: string }[],
+): string {
+  const det = details.length
+    ? details.map((d) => `${d.check}=${d.result}`).join(', ')
+    : '(no deterministic commands configured)'
+  return [
+    `BUILDER: commit ${build.commitSha || '(none)'}, +${build.linesAdded}/-${build.linesRemoved}`,
+    `TESTER: testCommit ${test.testCommitSha || '(none)'}, coverage ${test.coveragePercent}%, +${test.testsAdded} tests, passing=${test.testsPassing}`,
+    `REVIEWER: ${review.verdict} (conf ${review.confidence}), ${review.findings.length} finding(s)`,
+    `DETERMINISTIC (orchestrator re-run): ${det}`,
+  ].join('\n')
+}
+
+function summarizeValidations(v: AuditValidations): string {
+  const entries = Object.entries(v)
+  return entries.length ? entries.map(([k, val]) => `${k}=${val}`).join(', ') : 'none configured'
+}
+
+function syntheticBuildDeficiency(v: AuditValidations): Deficiency {
+  return {
+    ownerRole: 'builder',
+    severity: 'P1',
+    what: `Deterministic re-run failed: ${summarizeValidations(v)}`,
+    whyItMatters: 'A producer reported success but the orchestrator re-run disagrees (H1).',
+    evidenceRef: 'orchestrator deterministic re-run',
+    suggestedFix: 'Fix the failing check(s) so typecheck/lint/test pass.',
+  }
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+type StageName = 'BUILD' | 'TEST' | 'REVIEW' | 'CHECK' | 'COMMIT' | 'REPORT'
 
 async function writeStageAudit(
   opts: { project: ProjectSlug; task: Task; targetRepo: string },
-  stage: 'BUILD' | 'TEST' | 'REVIEW' | 'COMMIT' | 'REPORT',
+  stage: StageName,
   result: {
     outcome: 'success' | 'failure' | 'partial' | 'escalated'
     tokens: { input: number; output: number; cacheRead?: number }
@@ -292,6 +679,9 @@ async function writeStageAudit(
   },
   tier: Tier,
   retriesUsed: number,
+  // F1: the CHECK gate populates the deterministic matrix + the refire decision
+  // log; other stages leave them empty (their producer doesn't gate itself).
+  extra?: { validations?: AuditValidations; decisions?: readonly AuditDecision[] },
 ): Promise<string | null> {
   const agent: AuditRow['agent'] =
     stage === 'BUILD'
@@ -300,9 +690,11 @@ async function writeStageAudit(
         ? 'tester'
         : stage === 'REVIEW'
           ? 'reviewer'
-          : stage === 'COMMIT'
-            ? 'commit'
-            : 'reporter'
+          : stage === 'CHECK'
+            ? 'checker'
+            : stage === 'COMMIT'
+              ? 'commit'
+              : 'reporter'
 
   const row = await writeAuditRow(opts.targetRepo, {
     ts: new Date().toISOString(),
@@ -321,8 +713,8 @@ async function writeStageAudit(
     },
     costUsd: result.costUsd,
     inputFiles: result.filesRead,
-    decisions: [],
-    validations: {},
+    decisions: extra?.decisions ?? [],
+    validations: extra?.validations ?? {},
     outcome: result.outcome,
     nextStage: nextStageAfter(stage, result.outcome, retriesUsed),
     ...(result.notes ? { notes: result.notes } : {}),
@@ -332,7 +724,7 @@ async function writeStageAudit(
 }
 
 function nextStageAfter(
-  stage: 'BUILD' | 'TEST' | 'REVIEW' | 'COMMIT' | 'REPORT',
+  stage: StageName,
   outcome: string,
   retriesUsed: number,
 ): Stage | 'DONE' | 'BLOCKED' {
@@ -348,7 +740,9 @@ function nextStageAfter(
     case 'TEST':
       return 'REVIEW'
     case 'REVIEW':
-      return retriesUsed >= 3 ? 'BLOCKED' : 'COMMIT'
+      return retriesUsed >= 3 ? 'BLOCKED' : 'CHECK'
+    case 'CHECK':
+      return 'COMMIT'
     case 'COMMIT':
       return 'REPORT'
     case 'REPORT':
