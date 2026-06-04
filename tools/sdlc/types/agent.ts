@@ -7,7 +7,7 @@
  */
 
 import type { AgentRole, ModelId, ModelTransport } from './audit.js'
-import type { CheckerOutput, CheckerPayload } from './checker.js'
+import type { CheckerOutput, CheckerPayload, Deficiency } from './checker.js'
 import type { ProjectSlug } from './project.js'
 import type { Result } from './result.js'
 import type { Priority } from './task.js'
@@ -109,6 +109,8 @@ export interface BuilderPayload {
   readonly branch: string
   /** Optional: feedback from previous review iteration */
   readonly reviewerFeedback?: string
+  /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
+  readonly deficiencies?: readonly Deficiency[]
 }
 
 export interface BuilderOutput {
@@ -123,6 +125,8 @@ export interface TesterPayload {
   readonly commitSha: string
   readonly acceptanceCriteria: readonly string[]
   readonly coverageFloor: number
+  /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
+  readonly deficiencies?: readonly Deficiency[]
 }
 
 export interface TesterOutput {
@@ -137,6 +141,8 @@ export interface ReviewerPayload {
   readonly commitShas: readonly string[]
   readonly acceptanceCriteria: readonly string[]
   readonly tier: number
+  /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
+  readonly deficiencies?: readonly Deficiency[]
 }
 
 /**
