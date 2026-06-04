@@ -19,6 +19,14 @@ import type { Tier } from '../types/index.js'
 export const MAX_RETRIES_V1 = 3 as const
 
 /**
+ * Bound on the CHECKER quality-refire loop (H5). Deliberately small: refires are
+ * reserved for substantive gaps, not nitpicks — a high cap would let the gate
+ * churn and hurt throughput. Distinct from `MAX_RETRIES_V1` (the outcome-based
+ * build/review retry); this is the quality-based loop layered on top.
+ */
+export const MAX_CHECKER_REFIRES_V1 = 2 as const
+
+/**
  * v1.5+ — tier-aware caps (Q-AI-26 / R-AISDLC-105). Not active in v1; here
  * for forward compatibility + so the policy is one config flip away.
  */
@@ -99,5 +107,71 @@ export function shouldRetry(
     retriesUsed,
     retriesRemaining: MAX_RETRIES_V1 - retriesUsed,
     reason: 'CHANGES_REQUESTED — advisory feedback, proceed to COMMIT (v1)',
+  }
+}
+
+/**
+ * Decision returned by `shouldRefire()` — the CHECKER quality gate's loop control.
+ */
+export interface RefireDecision {
+  readonly action: 'pass' | 'refire' | 'escalate'
+  readonly refiresUsed: number
+  readonly refiresRemaining: number
+  readonly reason: string
+}
+
+/**
+ * Decide what to do after the CHECKER gate. This is the QUALITY-based loop (H5),
+ * distinct from `shouldRetry`'s outcome-based loop:
+ *   - A deterministic re-run failure (H1) OR a CHECKER `REFIRE` → bounded refire
+ *     of the owning producer (≤ `MAX_CHECKER_REFIRES_V1`).
+ *   - CHECKER `ESCALATE`, or refires exhausted (non-convergence) → HITL.
+ *   - CHECKER `PASS` with the deterministic matrix green → proceed to COMMIT.
+ *
+ * Deterministic failure overrides a (too-lenient) CHECKER PASS: machine-checkable
+ * facts are never waved through by an LLM verdict.
+ */
+export function shouldRefire(
+  verdict: 'PASS' | 'REFIRE' | 'ESCALATE',
+  hasDeterministicFailure: boolean,
+  refiresUsed: number,
+): RefireDecision {
+  const refiresRemaining = MAX_CHECKER_REFIRES_V1 - refiresUsed
+
+  if (verdict === 'PASS' && !hasDeterministicFailure) {
+    return {
+      action: 'pass',
+      refiresUsed,
+      refiresRemaining,
+      reason: 'CHECKER PASS + deterministic re-run green — proceed to COMMIT',
+    }
+  }
+
+  if (verdict === 'ESCALATE') {
+    return {
+      action: 'escalate',
+      refiresUsed,
+      refiresRemaining,
+      reason: 'CHECKER ESCALATE — needs MANAGER judgment',
+    }
+  }
+
+  // REFIRE, or PASS-but-deterministic-failure (H1 overrides the lenient verdict).
+  if (refiresRemaining <= 0) {
+    return {
+      action: 'escalate',
+      refiresUsed,
+      refiresRemaining: 0,
+      reason: `Non-convergence after ${refiresUsed} refire(s) — escalate to MANAGER (H5)`,
+    }
+  }
+
+  return {
+    action: 'refire',
+    refiresUsed,
+    refiresRemaining,
+    reason: hasDeterministicFailure
+      ? 'Deterministic re-run found a failure (H1) — refire the owning producer'
+      : 'CHECKER REFIRE — refire the owning producer with the deficiencies',
   }
 }
