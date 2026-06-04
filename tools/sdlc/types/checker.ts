@@ -95,3 +95,19 @@ export interface CheckerPayload {
   /** Deficiencies from earlier refire iterations, so the CHECKER can judge convergence. */
   readonly priorDeficiencies?: readonly Deficiency[]
 }
+
+// ─── Shared severity-rubric helpers (used by REVIEWER findings + CHECKER deficiencies) ───
+
+/**
+ * P0/P1 are release-blockers — the push gate (AGENT-GOVERNANCE.md §6) requires
+ * no open P0/P1 at merge; P2/P3 may ship as filed follow-ups.
+ */
+export function isBlockingPriority(p: Priority): boolean {
+  return p === 'P0' || p === 'P1'
+}
+
+/** Numeric rank for ordering, most-severe first (P0 → 0 … P3 → 3). */
+export function priorityRank(p: Priority): number {
+  const rank: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
+  return rank[p]
+}
