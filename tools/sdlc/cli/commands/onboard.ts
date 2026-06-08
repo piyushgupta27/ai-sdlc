@@ -13,14 +13,13 @@
  *   - .github/workflows/*.yml writes per consumer repo
  *   - CODEOWNERS auto-write
  *   - Label taxonomy creation via gh label create
- *   - develop branch creation if absent
  *
  * Those graduate when first real testbed onboards (trip-research, week 4).
  * For v1 they're documented in ONBOARDING.md but applied manually.
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initialState, projectDir, writeState } from '../../orchestrator/state.js'
 import { type ProjectConfig, asProjectSlug } from '../../types/index.js'
@@ -108,6 +107,7 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(config, null, 2)}\n\n`)
     process.stdout.write(`Would write initial state to projects/${slug}/state.json.\n`)
     process.stdout.write(`Would create skeleton CLAUDE.md if not present in ${repo}.\n`)
+    process.stdout.write(`Would ensure .audit/ + .sdlc-queue/ are gitignored in ${repo}.\n`)
     process.stdout.write('\n(Dry run — no changes made.)\n')
     return 0
   }
@@ -132,6 +132,11 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     process.stdout.write(`(CLAUDE.md exists at ${claudeMdPath} — left as-is)\n`)
   }
 
+  // 5. Ensure the pipeline's own artifact dirs are gitignored in the target repo,
+  // so the deterministic lint/format gate doesn't fail on the orchestrator's own
+  // output (.audit/ audit log + .sdlc-queue/ HITL queue). See ai-sdlc#37.
+  await seedGitignore(repo)
+
   process.stdout.write(`
 ✓ Onboarded ${slug}.
 
@@ -140,12 +145,35 @@ Next steps (v1 manual; v1.5+ automates these):
   2. Create GitHub Project board for ${owner}/${slug}:
        gh project create --owner ${owner} --title "${slug} pipeline"
      Then add canonical columns: Ready, Building, QA, Review, Done, Blocked
-  3. Set develop branch as default merge target if not already:
-       cd ${repo} && git checkout -b develop && git push origin develop
-  4. Run \`pnpm sdlc status --project ${slug}\` to verify state
+  3. Run \`pnpm sdlc status --project ${slug}\` to verify state
+
+  Note: the pipeline opens PRs against \`main\` (we merge to main).
 `)
 
   return 0
+}
+
+/**
+ * Append the ai-sdlc pipeline's artifact dirs to the target repo's .gitignore
+ * (idempotent). The orchestrator writes `.audit/` (audit log) and `.sdlc-queue/`
+ * (HITL queue) into the working tree; without ignoring them, a deterministic
+ * lint/format gate that scans the whole repo fails on the pipeline's own output.
+ * See ai-sdlc#37.
+ */
+async function seedGitignore(repo: string): Promise<void> {
+  const gitignorePath = join(repo, '.gitignore')
+  const artifactDirs = ['.audit/', '.sdlc-queue/']
+  const existing = existsSync(gitignorePath) ? await readFile(gitignorePath, 'utf8') : ''
+  const lines = existing.split('\n')
+  const missing = artifactDirs.filter((d) => !lines.includes(d))
+  if (missing.length === 0) {
+    process.stdout.write('(.gitignore already excludes ai-sdlc artifacts)\n')
+    return
+  }
+  const prefix = existing === '' || existing.endsWith('\n') ? '' : '\n'
+  const block = `${prefix}\n# ai-sdlc pipeline artifacts (audit log + HITL queue written into the working tree)\n${missing.join('\n')}\n`
+  await appendFile(gitignorePath, block, 'utf8')
+  process.stdout.write(`✓ Added ${missing.join(', ')} to ${gitignorePath}\n`)
 }
 
 function skeletonClaudeMd(slug: string, owner: string): string {
