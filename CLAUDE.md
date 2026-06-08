@@ -50,6 +50,13 @@ convention — and they are non-negotiable.
 - **Commit authorship = the user.** Always author commits as Piyush (his GitHub-linked email) so contributions land on his graph. A separate bot identity, once set up, is for **PR-opening only** — never for commit authorship.
 - Full model + the deferred mechanization: `AGENT-GOVERNANCE.md §4.1`.
 
+## Output + improvement-loop rules (canonical — propagated to every onboarded repo)
+
+These are the **non-automatable hard rules**. ai-sdlc holds them canonically; `sdlc onboard` force-writes them into each onboarded project's `CLAUDE.md`, and `sdlc doctor` verifies their presence (drift). See #41. (Doctor guarantees a rule is *present*; *adherence* stays human review — quality isn't machine-gateable, presence is.)
+
+- **Reviewer-facing output leads with the decision.** PRs, escalations, findings, status updates: open with the decision/answer + recommendation, plain-first, scannable (short bullets, minimal jargon); put depth below. A dense wall of text is a failure even when "structured." The reader is a manager + dev — impact-first framing, with enough technical anchor.
+- **Testbed duty (every onboarded repo).** When dogfooding surfaces a platform gap (onboarding miss, gate false-positive, prompt weakness), document it **exhaustively + without bias** — what / why it matters / evidence / suggested fix — as an ai-sdlc issue. The platform enforces systematically; testbeds report gaps diligently; **neither is assumed correct.** This is how platform and testbeds improve each other.
+
 ## Architecture
 
 - **Pattern:** event-driven orchestrator + stateless agents + append-only audit log
