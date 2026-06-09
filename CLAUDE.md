@@ -110,7 +110,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full design.
 - Unit tests: vitest, co-located `*.test.ts`
 - Integration tests: separate `*.integration.test.ts`; run only in `pnpm run test:integration`
 - E2E tests for the dashboard: Playwright (added in Phase A late)
-- Fixtures live at `tools/sdlc/fixtures/` (regression suite for reviewer fleet)
+- *Planned (not yet built):* a regression/eval fixture suite at `tools/sdlc/fixtures/` for the reviewer fleet
 - `pnpm run ci` is the gate; CI workflow runs the same command
 
 ## Local dev
@@ -148,7 +148,7 @@ pnpm --filter @ai-sdlc/dashboard dev
 - This repo is meta-recursive: ai-sdlc agents will eventually manage ai-sdlc's own code. Bootstrapping order matters — initial code is human-authored; first agent-authored PR is a Tier 4 typo fix to validate the pipeline works on itself.
 - The audit log writer (Tier 0) is one of the FIRST things written manually; once it exists, every subsequent agent action lands in it. Don't write agent code before audit log code.
 - The blast-radius hook protects itself: `tools/check-blast-radius.sh` is in its own Red zone declaration. Self-modification requires explicit HITL approval.
-- Test fixtures for the reviewer fleet (`tools/sdlc/fixtures/regressions/`) are git-tracked + part of CI. They're how we know reviewers haven't regressed.
+- **Planned — not yet built:** a git-tracked reviewer-fleet regression suite under `tools/sdlc/fixtures/regressions/`, wired into CI, is how we'll know reviewers haven't regressed. It does not exist yet — don't reference it as if it does (this doc is loaded into agent context).
 
 ## Skill routing (gstack)
 

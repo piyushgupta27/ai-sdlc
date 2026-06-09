@@ -33,7 +33,7 @@ Currently in Phase A foundation. The platform is not yet runnable; the orchestra
   - `tools/sdlc/hooks/` — pre/post-write hooks (Layer 2 of blast-radius enforcement)
   - `tools/sdlc/cli/` — CLI entry; thin wrapper over orchestrator
   - `tools/sdlc/dashboard/` — Next.js sub-app at `:3001` (Phase A late)
-  - `tools/sdlc/fixtures/` — regression suite for reviewer fleet
+  - `tools/sdlc/fixtures/` — *(planned, not yet created)* regression/eval suite for the reviewer fleet
   - `tools/sdlc/types/` — shared types
   - `projects/<slug>/` — per-tenant config + state
 
@@ -68,7 +68,7 @@ Structured JSON only. Required fields: `ts`, `project`, `level`, `component`, `m
 - Coverage targets: ≥70% (general), ≥85% (Tier 0/1)
 - Unit: `*.test.ts` co-located
 - Integration: `*.integration.test.ts`, run separately
-- Regression fixtures: `tools/sdlc/fixtures/regressions/`
+- Regression fixtures: `tools/sdlc/fixtures/regressions/` — *planned; not yet built* (the reviewer-fleet eval harness)
 - E2E (dashboard): Playwright (Phase A late)
 - `pnpm run ci` is the gate
 
@@ -92,7 +92,7 @@ pnpm run dev                  # TS watch mode
 - **Meta-recursive bootstrap:** ai-sdlc agents will eventually manage ai-sdlc's own code. Initial code is human-authored; first agent-authored PR is a Tier 4 typo fix.
 - **Audit log first, agents second:** the audit log writer is one of the first things built. Without it, no agent action can be safely recorded.
 - **Blast-radius hook protects itself:** `tools/check-blast-radius.sh` is in its own Red zone declaration. Self-modification requires HITL.
-- **Regression fixtures are load-bearing:** `tools/sdlc/fixtures/regressions/*` are git-tracked and exercised by CI on every reviewer fleet change.
+- **Regression fixtures are planned, not yet built:** a git-tracked `tools/sdlc/fixtures/regressions/*` suite, exercised by CI on every reviewer-fleet change, is a planned eval-harness deliverable — it does **not** exist today. Until it lands, reviewer changes are covered by unit tests only; don't cite it as an existing gate.
 
 ## Public API
 
@@ -132,7 +132,7 @@ Not yet (Phase A in progress). Will be the `sdlc` CLI per [DESIGN.md](./DESIGN.m
    - Define agent's brief schema (Zod)
    - Define agent's output schema (Zod)
    - Write the prompt at `tools/sdlc/prompts/<role>/v1.md`
-   - Add a regression fixture under `tools/sdlc/fixtures/regressions/<role>/`
+   - *(once the eval harness lands — planned, not yet built)* add a regression fixture under `tools/sdlc/fixtures/regressions/<role>/`
    - Register in `tools/sdlc/router/registry.ts`
    - Add the agent to ARCHITECTURE.md §4
 
