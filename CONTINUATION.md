@@ -28,6 +28,25 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-10 (later) — #38 LANDED (PR #59 merged) · BUILDER/TESTER honor per-project validationCommands · #45 next
+
+**State:** `main` @ `359f1d7`. #38 (career-automation testbed blocker) is fixed + merged; worktree `ai-sdlc-gh38` removed. The career-automation pipeline can now be re-dispatched (#45 task spec at `~/.sdlc-tasks/ca-45.json`) — agents will validate under the project's Node-20 pin instead of the launcher's Node 22.
+
+**Just completed — #38 (PR #59; Red-zone Tier 1, `manager-approved` label + MANAGER merge):** BUILDER/TESTER now run each project's own `validationCommands` for their pre-commit self-check, falling back to `pnpm run <check>` when unset.
+- `types/agent.ts` — optional `validationCommands?: {typecheck?;lint?;test?}` on `BuilderPayload` + `TesterPayload` (inlined to match `ProjectConfig`; keeps `types/` a leaf layer, no orchestrator import).
+- `orchestrator/index.ts` — `loadValidationCommands(project)` loaded once per task, threaded into all **4** dispatch sites: BUILD + TEST in the main loop, and BUILDER + TESTER refire in `refireOwningProducers` (new `commands` param reusing what `runCheckGate` already loaded). Conditional spread mirrors the existing `deficiencies`/`reviewerFeedback` pattern.
+- `prompts/builder|tester/v1.md` — rewritten to run the payload's `validationCommands` **verbatim** (explicit "no runner/Node/flag substitution"). The whole payload is JSON-serialized into the brief (`agents/base.ts:146` `buildUserMessage`), so the commands reach the model — the prompt rewrite is live, not inert. Mirrors the H1 `runValidations` pattern.
+- Gate (Node 22): typecheck clean · 95/95 tests · biome `check` clean (only the pre-existing F3 warning at `dispatch.ts`, untouched). **No new unit test** — no orchestrator-dispatch mock harness exists; the type wiring is covered by typecheck and the runtime path mirrors the already-tested `runValidations`/`loadValidationCommands`. Flagged honestly in the PR; end-to-end proof = re-dispatching ca-45.
+- **Out of scope (confirmed on disk):** no subagent-timeout change (that's #45); `runtimeBinPath` does not exist in main.
+
+**Up next — #45 (trip-research blocker, DO NEXT):** make the subagent timeout smart/activity-based, replacing the static `timeoutSec ?? 300` default in `router/claude-code-subagent.ts`. **Correction to the prior pinned note:** #38 did NOT touch that file (it touched `orchestrator/index.ts` + `types/` + `prompts/`), so #45 is cleanly independent — branch off this updated `main`, no conflict. Build dynamic/activity-based, not a static bump. Testbed also filed trip-research #52/#35 — ask MANAGER for details before scoping.
+
+**Then:** re-dispatch career-automation #45 to prove #38 end-to-end → resume Phase-0 **PR-D** (zod envelope validation, IMP-02/#31) + **PR-E** (protected-files commit gate, IMP-03/#34/#9), after the user's 2 feature requests + a `/compact`.
+
+**Process note (manual-orchestration parity, confirmed with MANAGER):** while orchestration is hand-driven (no PLANNER/CHECKER/audit-row automation), we still follow the full governance contract — PR-only, never self-merge/approve, Red-zone label gate, full CI gate before push, commits authored as Piyush, explicit `git add`, worktree-per-PR. The missing `.audit/` row is compensated by putting gate-evidence in the PR body (a standing convention candidate for the PR template / CLAUDE.md).
+
+**Orphaned untracked docs (flagged, untouched):** `docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md` + `docs/plans/stage-2-career-automation-kickoff.md` sit untracked in the main worktree (referenced by older entries, never committed, absent on origin/main). Left as-is — MANAGER to decide commit-or-drop.
+
 ### 2026-06-10 (later) — PAUSED Phase-0 D/E for testbed blockers (#38 → #45); fix plans + D/E gotchas pinned
 
 **Why paused:** two dogfooding testbeds surfaced blockers; do these BEFORE PR-D/PR-E. After #38 + #45 + a `/compact` + 2 feature requests (user to share) → resume PR-D/PR-E.
