@@ -23,6 +23,7 @@ import {
   moveItem,
 } from '../../integrations/github-projects.js'
 import { parseDispatchTrigger, subscribe } from '../../integrations/ntfy.js'
+import { type BudgetDecision, PAUSE_THRESHOLD, budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
 import { projectDir, readState } from '../../orchestrator/state.js'
 import { type ProjectSlug, type Task, type Tier, asProjectSlug } from '../../types/index.js'
@@ -51,6 +52,14 @@ Examples:
   # Mobile dispatch — subscribe to ntfy; trigger from phone
   pnpm sdlc dispatch --project trip-research --webhook --topic <ntfy-slug>
 `
+
+/** Format the budget-pause notice (shared by both dispatch paths). */
+function formatBudgetPause(gate: BudgetDecision, processed?: number): string {
+  const pct = Math.round(gate.pct * 100)
+  const thr = Math.round(PAUSE_THRESHOLD * 100)
+  const tail = processed === undefined ? '' : ` Processed ${processed} task(s).`
+  return `\n⏸  Budget guard: $${gate.spentUsd.toFixed(2)} / $${gate.budgetUsd} this month (${pct}%) ≥ ${thr}% — new dispatch paused.${tail} Raise SDLC_MONTHLY_BUDGET_USD to override.\n`
+}
 
 export async function runDispatch(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
@@ -119,6 +128,12 @@ async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Prom
     `\nDispatching ${task.id} on ${slug} (tier ${task.tier}, target=${cfg.repoPath})...\n\n`,
   )
 
+  const gate = await budgetGate(new Date(), (cfg as { webhookTopic?: string }).webhookTopic)
+  if (gate.action === 'pause') {
+    process.stderr.write(formatBudgetPause(gate))
+    return 0
+  }
+
   const result = await runTask({
     project: slug,
     task,
@@ -157,6 +172,11 @@ async function dispatchFromBoard(
 
   let processed = 0
   while (processed < maxTasks) {
+    const gate = await budgetGate(new Date(), (cfg as { webhookTopic?: string }).webhookTopic)
+    if (gate.action === 'pause') {
+      process.stdout.write(formatBudgetPause(gate, processed))
+      return 0
+    }
     const ready = await listItems(project.value, 'Ready')
     if (!ready.ok) {
       process.stderr.write(`❌ ${ready.error.message}\n`)
