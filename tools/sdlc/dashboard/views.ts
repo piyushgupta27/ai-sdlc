@@ -6,6 +6,7 @@
  */
 
 import type { HITLRequest, HITLResponse, ProjectState } from '../types/index.js'
+import { getDashboardToken } from './auth.js'
 
 /**
  * Escape user-supplied content to avoid HTML injection. v1 dashboard is
@@ -196,6 +197,7 @@ export function renderGateDetail(opts: {
         <p class="muted">at ${esc(opts.existingResponse.respondedAt)}</p>
       </section>`
     : `<form method="POST" action="/api/queue/${esc(g.id)}">
+        <input type="hidden" name="csrfToken" value="${esc(getDashboardToken())}">
         <fieldset>
           <legend>Your decision</legend>
           ${optionsHtml}
