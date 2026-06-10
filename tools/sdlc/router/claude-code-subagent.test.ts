@@ -59,7 +59,7 @@ describe('parseDispatchPayload', () => {
     expect(r.error.code).toBe('subagent.invalid-json')
   })
 
-  it('defaults tokens and cost to 0 when usage is absent (no throw)', () => {
+  it('defaults tokens to 0 and leaves cost undefined when usage/cost are absent (no throw)', () => {
     const r = parseDispatchPayload(JSON.stringify({ is_error: false, result: 'hi' }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
@@ -67,6 +67,16 @@ describe('parseDispatchPayload', () => {
     expect(r.value.tokens.input).toBe(0)
     expect(r.value.tokens.output).toBe(0)
     expect(r.value.tokens.cacheRead).toBeUndefined()
-    expect(r.value.costUsd).toBe(0)
+    // GH#30: undefined (not 0) so the caller falls back to estimateCost rather than logging $0.
+    expect(r.value.costUsd).toBeUndefined()
+  })
+
+  it('keeps the real cost when the CLI reports total_cost_usd', () => {
+    const r = parseDispatchPayload(
+      JSON.stringify({ is_error: false, result: 'hi', total_cost_usd: 1.34 }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.costUsd).toBe(1.34)
   })
 })

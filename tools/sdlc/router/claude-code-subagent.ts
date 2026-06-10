@@ -264,7 +264,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
             tokens: payload.value.tokens,
             durationMs,
             exitCode: 0,
-            costUsd: payload.value.costUsd,
+            ...(payload.value.costUsd !== undefined ? { costUsd: payload.value.costUsd } : {}),
           }),
         )
       })
@@ -286,7 +286,8 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
 export interface ParsedDispatch {
   readonly rawText: string
   readonly tokens: { readonly input: number; readonly output: number; readonly cacheRead?: number }
-  readonly costUsd: number
+  /** Real cost from the CLI; `undefined` if the CLI omitted it (caller falls back to an estimate). */
+  readonly costUsd?: number
 }
 
 export function parseDispatchPayload(stdout: string): Result<ParsedDispatch, AppError> {
@@ -351,6 +352,14 @@ export function parseDispatchPayload(stdout: string): Result<ParsedDispatch, App
   const usage = env.usage ?? {}
   const cacheRead = num(usage.cache_read_input_tokens)
 
+  // Cost: keep the CLI's real value; leave it `undefined` if the CLI omitted it, so the
+  // caller falls back to a token-based estimate instead of silently logging $0 (GH#30 —
+  // the previous `num()` coercion to 0 made base.ts's `?? estimateCost()` dead code).
+  const costUsd =
+    typeof env.total_cost_usd === 'number' && Number.isFinite(env.total_cost_usd)
+      ? env.total_cost_usd
+      : undefined
+
   return ok({
     rawText: env.result,
     tokens: {
@@ -358,7 +367,7 @@ export function parseDispatchPayload(stdout: string): Result<ParsedDispatch, App
       output: num(usage.output_tokens),
       ...(cacheRead > 0 ? { cacheRead } : {}),
     },
-    costUsd: num(env.total_cost_usd),
+    ...(costUsd !== undefined ? { costUsd } : {}),
   })
 }
 
