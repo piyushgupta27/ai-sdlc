@@ -28,9 +28,9 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
-### 2026-06-10 (later) — #45 LANDED (PR #61 merged) · activity-based subagent timeout · BOTH testbed blockers cleared · ca-45 re-dispatch next
+### 2026-06-10 (later) — #45 LANDED (PR #61 merged) · activity-based subagent timeout · BOTH testbed blockers cleared · NEXT = #19 → #47+#62 → PR-D/PR-E (after /compact)
 
-**State:** `main` @ `c90975c`. Both testbed blockers (#38 + #45) are now fixed + merged; worktree `ai-sdlc-gh45` removed. The career-automation pipeline is unblocked end-to-end — **next action is to re-dispatch career-automation #45 to PROVE it live** (neither PR has end-to-end proof yet; both were honest about that).
+**State:** `main` @ `c90975c`. Both testbed blockers (#38 + #45) fixed + merged; worktree `ai-sdlc-gh45` removed. **#38 is already PROVEN end-to-end:** CA7 ran career-automation #45 green through the full pipeline (career-automation PR #64 — BUILD✓ TEST✓ REVIEW✓ CHECK✓ `{tsc:pass,lint:pass,tests:pass}`, $3.18, 868s, 0 retries, re-verified Node 20 529/529). So **do NOT re-dispatch ca-45** — it's done, and its checkout is CA7's (dirty tree, not ours). #45's timeout proof rests on its unit tests + the live CLI probe (a single >ceiling working-agent run isn't separately filmed; acceptable).
 
 **Just completed — #45 (PR #61; Red-zone Tier 1, `manager-approved` + MANAGER merge; 3 commits):** the blind 300s wall-clock subagent timeout is replaced with **activity-based liveness**.
 - Switched the transport to `--output-format stream-json --verbose --include-partial-messages` (probed live vs `claude 2.1.170`: one JSON event per step; terminal `result` event still carries `result`/`usage`/`total_cost_usd`; `--verbose` is required).
@@ -45,11 +45,12 @@ tags: [continuation, post-compact, resume]
 
 **Deferred → filed as low-pri issues (none block anything):** #63 (estimateCost cache-token semantics — pre-existing) · #64 (surface CLI error subtype) · #65 (#38 threading test coverage) · #66 (#38 TESTER coverage-command parity). All P3.
 
-**Up next (RESUME HERE):** **re-dispatch career-automation #45** — the live end-to-end proof of #38+#45:
-1. `git -C ~/Workspace/career-automation branch -D feature/gh-45` (delete the stale branch from the prior failed run; or salvage `770b958`).
-2. `cd ~/Workspace/ai-sdlc && export PATH="/opt/homebrew/opt/node@22/bin:$PATH" && pnpm sdlc dispatch --project career-automation --task-spec ~/.sdlc-tasks/ca-45.json`
-3. Watch BUILD→TEST→REVIEW→CHECK→COMMIT; read `~/Workspace/career-automation/.audit/<date>/audit.jsonl`. Task-spec path stops at COMMIT (local branch) → push + open PR by hand after review. Costs ~$0.5–2.
-**Then:** Phase-0 **PR-D** (zod envelope validation, #31) + **PR-E** (protected-files commit gate, #34/#9) — gated on the user's 2 feature requests + a `/compact` per the pinned plan.
+**Up next (RESUME HERE — after the planned `/compact`):** MANAGER set the queue from CA7's prioritisation prompt (`tasks/2026-06-10-prioritisation-prompt-for-aisdlc-from-ca7.md`). Each in its OWN worktree off `origin/main`, one PR at a time:
+1. **#19 — worktree isolation per agent (FIRST).** Orchestrator provisions + tears down an isolated git worktree per dispatch. Autonomy-foundational (gate for concurrency + the #47 board path). CA7 hand-built it in 6 manual steps today — **fold those into #19's acceptance:** (a) git-crypt key seed/symlink into the worktree git-dir (plain `worktree add` dies on the smudge filter), (b) make `node_modules` available (symlink — preserves the Node-pinned `better-sqlite3` binding), (c) internal `targetRepo` override instead of editing `projects/<slug>/config.json`, (d) secure teardown of copied secret material, (e) failure-lifecycle cleanup (orphaned worktrees on crash/SIGTERM, GC, disk bound), (f) unique branch+worktree names + no shared `.audit`/`.sdlc-queue` contention. Touches `cli/commands/dispatch.ts` (needs `--repo`/`--branch` override — currently hardcodes `targetRepo:cfg.repoPath`) + `router/`. Build on the now-merged #61 (settled transport core). "Done" bar: two agents concurrent on one repo, zero cross-contamination, proven.
+2. **#47 — onboarding+doctor for board columns/labels/hooks (SECOND), WITH #62.** Onboarding installs + `doctor` verifies GH Project columns (Ready/Building/QA/Review/Done/Blocked), label taxonomy, pre-push hooks (deferred from #41/PR#46). Unlocks the autonomous "drop card → ship" board path (every run is still manual `--task-spec` because Project #3 lacks columns). **Gate:** must ship with **#62** (`trustState`→tier HITL gate; currently display-only → ungated Tier-0/1 autonomy on the board path). `gh` API + filesystem work.
+3. **Then Phase-0 finish:** **PR-D** (zod envelope validation, #31 — `agents/base.ts`+`types/`, Red-zone; verify-before-build: did PR #33 already add it?) + **PR-E** (protected-files commit gate, #34/#9 — build on `tools/check-blast-radius.sh`).
+
+**Do NOT re-dispatch ca-45** (CA7 already proved it green — PR #64). Phase-2 still deferred: #48, #51, #30 follow-ups.
 
 ### 2026-06-10 (later) — #38 LANDED (PR #59 merged) · BUILDER/TESTER honor per-project validationCommands · #45 next
 
