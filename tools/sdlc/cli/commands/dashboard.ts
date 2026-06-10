@@ -1,8 +1,9 @@
 /**
  * `pnpm sdlc dashboard` — start the local dashboard at localhost:3001.
  *
- * Blocks until SIGINT (Ctrl-C). The dashboard is local-only (binds to
- * 127.0.0.1), no auth, no TLS — relies on local-only access.
+ * Blocks until SIGINT (Ctrl-C). Binds to 127.0.0.1; gate responses are
+ * token + same-origin protected (IMP-36). No TLS or login yet — exposing it
+ * beyond localhost needs the Phase-2 auth (#51).
  */
 
 import { startServer } from '../../dashboard/server.js'
@@ -15,7 +16,7 @@ Usage:
 
 Options:
   --port <n>    Bind to a different port (default 3001)
-  --host <ip>   Bind to a different host (default 127.0.0.1; do NOT use 0.0.0.0 unless you've added auth)
+  --host <ip>   Bind to a different host (default 127.0.0.1; do NOT expose beyond localhost without TLS + the Phase-2 login, #51)
 
 The dashboard surfaces:
   - Project list + state (mirror of \`pnpm sdlc status\`)
@@ -37,7 +38,7 @@ export async function runDashboard(argv: readonly string[]): Promise<number> {
 
   if (host !== '127.0.0.1' && host !== 'localhost') {
     process.stderr.write(
-      `⚠️ Binding to ${host} — the dashboard has no auth. Use only on trusted networks.\n`,
+      `⚠️ Binding to ${host} — gate responses are token-protected, but there's no TLS or login yet. Don't expose beyond localhost without the Phase-2 auth (#51).\n`,
     )
   }
 
