@@ -287,14 +287,27 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       // forever, defeating the timeout exactly when it's needed.
       let sigkillTimer: ReturnType<typeof setTimeout> | undefined
       const signalGroup = (sig: NodeJS.Signals) => {
-        try {
-          if (child.pid !== undefined) process.kill(-child.pid, sig)
-          else child.kill(sig)
-        } catch {
+        // Prefer signalling the whole group (`-pid`) so a foreground grandchild
+        // (e.g. `pnpm test`) is reaped, not orphaned.
+        if (child.pid === undefined) {
           try {
             child.kill(sig)
           } catch {
-            // Already gone — nothing to signal.
+            // Not yet spawned / already gone — nothing to signal.
+          }
+          return
+        }
+        try {
+          process.kill(-child.pid, sig)
+        } catch (e) {
+          // ESRCH = the group is already gone (leader exited) → nothing to do; a
+          // dead-pid `child.kill` would be a no-op anyway. Only fall back for other
+          // errors (e.g. the platform rejected the negative-pid group form).
+          if ((e as NodeJS.ErrnoException)?.code === 'ESRCH') return
+          try {
+            child.kill(sig)
+          } catch {
+            // Gone — nothing to signal.
           }
         }
       }
@@ -310,7 +323,15 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
 
       // Idle: re-armed on every byte of output. When it fires, kill ONLY if no tool
       // is outstanding — otherwise the agent is blocked on a legitimately-long tool,
-      // so re-arm and keep watching (the ceiling still bounds the total).
+      // so re-arm and keep watching.
+      //
+      // DELIBERATE TRADE-OFF (#45): the CLI does NOT stream a foreground tool's
+      // mid-run output, so a silent window during a tool is indistinguishable from a
+      // hang INSIDE that tool. We cannot idle-kill it without also killing long-but-
+      // healthy tools (e.g. `pnpm test`) — the very bug #45 fixes. So a mid-tool hang
+      // is bounded by the CEILING, not the idle timer (slower to detect than an
+      // idle-stage hang, but the only safe choice). Idle still catches the common
+      // case: the model stalling BETWEEN tool calls (openToolCalls == 0).
       let idleTimer: ReturnType<typeof setTimeout> | undefined
       const armIdle = () => {
         clearTimeout(idleTimer)
@@ -501,19 +522,25 @@ function parseNdjsonObjects(stdout: string): Record<string, unknown>[] {
  * `assistant` events OPEN tool calls (their `message.content` carries `tool_use`
  * blocks); `user` events CLOSE them (`tool_result` blocks). The transport uses the
  * open/close balance to know when the agent is blocked on a tool (#45).
+ *
+ * Gated by `obj.type` so we only count `tool_use` from `assistant` and
+ * `tool_result` from `user` — a misplaced block on the wrong event type can't
+ * desync the balance.
  */
 export function countToolTransitions(obj: Record<string, unknown>): {
   opened: number
   closed: number
 } {
+  const type = obj.type
+  if (type !== 'assistant' && type !== 'user') return { opened: 0, closed: 0 }
   const content = (obj.message as { content?: unknown } | undefined)?.content
   if (!Array.isArray(content)) return { opened: 0, closed: 0 }
   let opened = 0
   let closed = 0
   for (const block of content) {
     const t = (block as { type?: unknown } | null)?.type
-    if (t === 'tool_use') opened++
-    else if (t === 'tool_result') closed++
+    if (type === 'assistant' && t === 'tool_use') opened++
+    else if (type === 'user' && t === 'tool_result') closed++
   }
   return { opened, closed }
 }

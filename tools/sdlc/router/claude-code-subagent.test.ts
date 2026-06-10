@@ -211,6 +211,16 @@ describe('countToolTransitions', () => {
   it('is neutral for events without tool blocks', () => {
     expect(countToolTransitions({ type: 'result', result: 'ok' })).toEqual({ opened: 0, closed: 0 })
   })
+  it('gates by event type — a tool_use on a non-assistant event does not open', () => {
+    // a `user` event echoing a tool_use block must NOT desync the balance
+    expect(
+      countToolTransitions({ type: 'user', message: { content: [{ type: 'tool_use' }] } }),
+    ).toEqual({ opened: 0, closed: 0 })
+    // a `tool_result` on an assistant event must NOT close
+    expect(
+      countToolTransitions({ type: 'assistant', message: { content: [{ type: 'tool_result' }] } }),
+    ).toEqual({ opened: 0, closed: 0 })
+  })
 })
 
 // ─── Transport timer behavior (#45) ──────────────────────────────────────────
@@ -330,6 +340,43 @@ describe('ClaudeCodeCliTransport timers (#45)', () => {
     if (!r.ok) return
     expect(r.value.rawText).toBe('done')
     expect(r.value.costUsd).toBe(0.02)
+  })
+
+  it('signals the whole process GROUP (-pid) on a real pid, falling back on non-ESRCH errors', async () => {
+    const child = makeFakeChild()
+    child.pid = 4242
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+      await vi.advanceTimersByTimeAsync(10_000) // idle fires
+      expect(killSpy).toHaveBeenCalledWith(-4242, 'SIGTERM') // negative pid = group
+      expect(child.kill).not.toHaveBeenCalled() // group signal succeeded → no fallback
+      child.emit('close', null)
+      await p
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('does NOT fall back to child.kill when the group is already gone (ESRCH)', async () => {
+    const child = makeFakeChild()
+    child.pid = 4243
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const esrch = Object.assign(new Error('no such process'), { code: 'ESRCH' })
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw esrch
+    })
+    try {
+      const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(killSpy).toHaveBeenCalledWith(-4243, 'SIGTERM')
+      expect(child.kill).not.toHaveBeenCalled() // ESRCH → no dead-pid fallback
+      child.emit('close', null)
+      await p
+    } finally {
+      killSpy.mockRestore()
+    }
   })
 })
 
