@@ -28,6 +28,22 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-10 — Phase 0: #43 merged (GH#36) · journey→CONTINUATION logging set · PR-B dashboard auth open · #48 filed
+
+**State (disk/GitHub):** `main` @ `856205e`. Phase-0 underway (personal-v1 plan: 6 safety items).
+- **#43 MERGED** → GH#36 fixed: 6 phantom `tools/sdlc/fixtures/regressions/` claims in `CONTEXT.md`/`CLAUDE.md` rewritten as "planned, not built" (Option B). **#36 CLOSED.**
+- **PR-B OPEN** (`feat/dashboard-auth-and-clickurl`) — IMP-36 dashboard auth: CSRF + same-Origin + bearer/`csrfToken` (timing-safe) + 409 idempotency on `POST /api/queue/<id>`. New `dashboard/auth.ts` + 18 unit tests; **requires** `SDLC_DASHBOARD_TOKEN` (fail-fast at startup; no auto-gen). Live HTTP matrix 6/6 green (token set). Tier 2, non-Red-zone; awaiting MANAGER review.
+- **#48 FILED (P2)** — IMP-32 ntfy Approve/Reject buttons + reachable URL; deferred (needs a public URL = Phase 2 + the IMP-36 token).
+
+**Decisions locked (2026-06-08..10):**
+- **Logging model:** `CONTINUATION.md` = the running log; only STRONG checkpoints get a `docs/checkpoints/` file. The `journey/` devlog idea is RETIRED (one system too many). Routine PRs fold here.
+- **Dashboard auth phasing:** IMP-36 (CSRF/Origin/token) for laptop-only now; "Sign in with Google" (OIDC — free, single email, 2FA via Google) is the Phase-2 strong-auth layer when the dashboard is exposed publicly (needs a tunnel; relates to #48).
+- **Worktree-per-session:** concurrent sessions each get their own `git worktree` (this session ran alongside a live `TripPlan_AISDLC_Part1` session working in `ai-sdlc-doctor`).
+
+**Up next:** land PR-B → PR-C IMP-14 budget guard (⏰ before 2026-06-15) → PR-D zod (IMP-02) → PR-E protected-files (IMP-03; read #34/#9 first). IMP-32/#48 + Google-auth = Phase 2.
+
+**Reference:** plan `meta/plans/2026-06-05-aisdlc-personal-v1-PLAN.md` (vault) · `docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md`.
+
 ### 2026-06-08 — Stage-2 dogfood + learnings-review CLOSED · 3 PRs merged
 
 **State:** all 3 PRs merged to main:

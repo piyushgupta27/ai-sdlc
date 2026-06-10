@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { checkResponse, listPending, recordResponse } from '../orchestrator/hitl-queue.js'
 import { listProjects, projectDir, readState } from '../orchestrator/state.js'
 import { type HITLResponse, asProjectSlug } from '../types/index.js'
+import { authorizeMutation, getDashboardToken } from './auth.js'
 import {
   STYLES_CSS,
   renderError,
@@ -47,6 +48,8 @@ export function startServer(opts: { port?: number; host?: string } = {}): {
 } {
   const port = opts.port ?? PORT
   const host = opts.host ?? HOST
+  // Fail fast (IMP-36): the dashboard refuses to start without its required auth token.
+  getDashboardToken()
   const server = createServer((req, res) => {
     handleRequest(req, res).catch((cause) => {
       res.statusCode = 500
@@ -256,6 +259,20 @@ async function handleGateResponse(
   const comment = params.get('comment') ?? undefined
   const approvalToken = params.get('approvalToken') ?? undefined
 
+  // CSRF + auth (IMP-36): same-origin AND a valid token (Authorization: Bearer
+  // for programmatic callers, or the injected `csrfToken` field for browser forms).
+  const auth = authorizeMutation({
+    originHeader: req.headers.origin,
+    hostHeader: req.headers.host,
+    authHeader: req.headers.authorization,
+    bodyToken: params.get('csrfToken') ?? undefined,
+  })
+  if (!auth.ok) {
+    res.statusCode = 403
+    res.end(renderError('Forbidden', auth.reason))
+    return
+  }
+
   if (!decision) {
     res.statusCode = 400
     res.end(renderError('Bad request', 'Missing decision field'))
@@ -273,6 +290,13 @@ async function handleGateResponse(
   for (const slug of projects.value) {
     const repoPath = await readRepoPath(slug)
     if (!repoPath || !existsSync(repoPath)) continue
+    // Idempotency (IMP-36): a gate already answered → 409, never silently overwrite.
+    const existing = await checkResponse(repoPath, gateId)
+    if (existing.ok && existing.value) {
+      res.statusCode = 409
+      res.end(renderError('Already answered', `Gate ${gateId} already has a recorded response.`))
+      return
+    }
     const pending = await listPending(repoPath)
     if (!pending.ok) continue
     if (!pending.value.find((g) => g.id === gateId)) continue
