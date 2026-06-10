@@ -120,6 +120,9 @@ const DEFAULT_IDLE_SEC = 120
 const DEFAULT_CEILING_SEC = 600
 /** How often to emit a live-progress line to stderr while an agent runs. */
 const PROGRESS_HEARTBEAT_MS = 15_000
+/** Grace period after SIGTERM before escalating to SIGKILL (so a child that
+ *  ignores SIGTERM can't hang `dispatch` forever — `close` always fires). */
+const SIGKILL_GRACE_MS = 10_000
 
 /** Parse a positive-number env var; undefined if unset/invalid. */
 function envSec(name: string): number | undefined {
@@ -256,63 +259,125 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       const child = spawn('claude', args, {
         cwd: opts.cwd,
         env,
+        // detached → the child leads its own process group, so on timeout we can
+        // signal the WHOLE group (reaping any foreground subprocess it spawned,
+        // e.g. `pnpm test`) instead of orphaning it.
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
 
-      let stdout = ''
+      // `parseBuf` retains only the events the final parse + cost-recovery need —
+      // everything EXCEPT the high-volume `stream_event` partial deltas — so memory
+      // stays bounded on long runs while the terminal `result` event and per-turn
+      // `usage` are still captured. Liveness (below) still reacts to every byte.
+      let parseBuf = ''
       let stderr = ''
+      let lineBuf = ''
       let killReason: 'idle' | 'ceiling' | null = null
       let lastActivity = performance.now()
       let toolCalls = 0
+      // Tool calls seen (tool_use) minus completed (tool_result). While > 0 the
+      // agent is legitimately BLOCKED on a tool (e.g. a long `pnpm test`) and stream
+      // silence is EXPECTED — the idle timer must not fire; only the ceiling bounds
+      // it (#45: the CLI does not stream a foreground subprocess's mid-run output).
+      let openToolCalls = 0
+
+      // Terminate the whole process group, escalating SIGTERM → SIGKILL if the child
+      // ignores the term signal — otherwise `close` never fires and `dispatch` hangs
+      // forever, defeating the timeout exactly when it's needed.
+      let sigkillTimer: ReturnType<typeof setTimeout> | undefined
+      const signalGroup = (sig: NodeJS.Signals) => {
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, sig)
+          else child.kill(sig)
+        } catch {
+          try {
+            child.kill(sig)
+          } catch {
+            // Already gone — nothing to signal.
+          }
+        }
+      }
+      const killChild = (reason: 'idle' | 'ceiling') => {
+        if (killReason) return // already terminating — don't overwrite or re-signal
+        killReason = reason
+        signalGroup('SIGTERM')
+        sigkillTimer = setTimeout(() => signalGroup('SIGKILL'), SIGKILL_GRACE_MS)
+      }
 
       // Ceiling: absolute backstop, NEVER reset.
-      const ceilingTimer = setTimeout(() => {
-        killReason = 'ceiling'
-        child.kill('SIGTERM')
-      }, ceilingSec * 1000)
+      const ceilingTimer = setTimeout(() => killChild('ceiling'), ceilingSec * 1000)
 
-      // Idle: reset on every stream line — output means the agent is alive.
+      // Idle: re-armed on every byte of output. When it fires, kill ONLY if no tool
+      // is outstanding — otherwise the agent is blocked on a legitimately-long tool,
+      // so re-arm and keep watching (the ceiling still bounds the total).
       let idleTimer: ReturnType<typeof setTimeout> | undefined
-      const resetIdle = () => {
+      const armIdle = () => {
         clearTimeout(idleTimer)
         idleTimer = setTimeout(() => {
-          killReason = 'idle'
-          child.kill('SIGTERM')
+          if (killReason) return
+          if (openToolCalls > 0) {
+            armIdle() // tool in flight → silence expected; defer to the ceiling
+            return
+          }
+          killChild('idle')
         }, idleSec * 1000)
       }
-      resetIdle()
+      armIdle()
 
       // Live progress to stderr so `dispatch` shows activity, not a silent hang
       // (#45 AC5). Read-only — the ntfy "extend?" HITL is deferred to #48.
       const heartbeat = setInterval(() => {
         const agoSec = Math.round((performance.now() - lastActivity) / 1000)
-        process.stderr.write(`[subagent] ${toolCalls} tool call(s); last activity ${agoSec}s ago\n`)
+        process.stderr.write(
+          `[subagent] ${toolCalls} tool call(s), ${openToolCalls} in flight; last activity ${agoSec}s ago\n`,
+        )
       }, PROGRESS_HEARTBEAT_MS)
 
       const clearTimers = () => {
         clearTimeout(ceilingTimer)
         clearTimeout(idleTimer)
+        clearTimeout(sigkillTimer)
         clearInterval(heartbeat)
       }
 
-      const onActivity = (text: string) => {
-        lastActivity = performance.now()
-        resetIdle()
-        toolCalls += countToolUses(text)
+      // Process one COMPLETE stream-json line: track tool-call balance + retain the
+      // non-partial events for the final parse.
+      const onLine = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        let obj: Record<string, unknown>
+        try {
+          const parsed = JSON.parse(trimmed)
+          if (typeof parsed !== 'object' || parsed === null) return
+          obj = parsed as Record<string, unknown>
+        } catch {
+          return // partial/non-JSON line — liveness already reacted to the bytes
+        }
+        if (obj.type === 'stream_event') return // high-volume delta — not retained
+        parseBuf += `${trimmed}\n`
+        const { opened, closed } = countToolTransitions(obj)
+        toolCalls += opened
+        openToolCalls = Math.max(0, openToolCalls + opened - closed)
       }
 
       child.stdout.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf8')
-        stdout += text
-        onActivity(text)
+        lastActivity = performance.now()
+        armIdle()
+        lineBuf += chunk.toString('utf8')
+        let nl = lineBuf.indexOf('\n')
+        while (nl >= 0) {
+          onLine(lineBuf.slice(0, nl))
+          lineBuf = lineBuf.slice(nl + 1)
+          nl = lineBuf.indexOf('\n')
+        }
       })
 
       child.stderr.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf8')
-        stderr += text
-        // stderr output is liveness too, but carries no tool-use events.
+        stderr += chunk.toString('utf8')
+        // stderr output is liveness too, but carries no stream events.
         lastActivity = performance.now()
-        resetIdle()
+        armIdle()
       })
 
       child.on('error', (cause) => {
@@ -340,13 +405,16 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       child.on('close', (exitCode) => {
         clearTimers()
         const durationMs = performance.now() - start
+        // Flush any trailing line without a newline (the final `result` event often
+        // arrives unterminated) so the parse sees it.
+        if (lineBuf.trim()) onLine(lineBuf)
 
         if (killReason) {
           // The kill pre-empted the terminal envelope, so recover what was spent
           // from the partial stream (else the run logs $0 — the bug #45 calls out).
-          // Tokens come from the last usage-bearing event; cost is estimated locally
-          // (the CLI's total_cost_usd only lands on the result event we never got).
-          const recoveredTokens = recoverUsageFromStream(stdout)
+          // Cost is estimated locally (the CLI's total_cost_usd only lands on the
+          // result event we never got).
+          const recoveredTokens = recoverUsageFromStream(parseBuf)
           const cause: SubagentTimeoutCause = {
             reason: killReason,
             idleSec,
@@ -355,7 +423,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
             recoveredCostUsd: estimateCost(opts.model, recoveredTokens),
             toolCalls,
             lastActivityAgoMs: Math.round(performance.now() - lastActivity),
-            stdout: stdout.slice(-2000),
+            stdout: parseBuf.slice(-2000),
             stderr: stderr.slice(-2000),
           }
           const detail =
@@ -392,7 +460,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         // it holds the agent's `result` text + `usage` + real cost (F5), same fields
         // the old buffered envelope had. A malformed/error envelope is a hard failure
         // here — we never silently fall back to 0-token rows.
-        const payload = parseDispatchPayload(stdout)
+        const payload = parseDispatchPayload(parseBuf)
         if (!payload.ok) {
           resolve(payload)
           return
@@ -428,38 +496,75 @@ function parseNdjsonObjects(stdout: string): Record<string, unknown>[] {
   return out
 }
 
-/** Count `tool_use` occurrences in a stream chunk — best-effort progress signal. */
-export function countToolUses(text: string): number {
-  return (text.match(/"type":\s*"tool_use"/g) ?? []).length
+/**
+ * Count tool-call transitions in a single (non-stream_event) stream object:
+ * `assistant` events OPEN tool calls (their `message.content` carries `tool_use`
+ * blocks); `user` events CLOSE them (`tool_result` blocks). The transport uses the
+ * open/close balance to know when the agent is blocked on a tool (#45).
+ */
+export function countToolTransitions(obj: Record<string, unknown>): {
+  opened: number
+  closed: number
+} {
+  const content = (obj.message as { content?: unknown } | undefined)?.content
+  if (!Array.isArray(content)) return { opened: 0, closed: 0 }
+  let opened = 0
+  let closed = 0
+  for (const block of content) {
+    const t = (block as { type?: unknown } | null)?.type
+    if (t === 'tool_use') opened++
+    else if (t === 'tool_result') closed++
+  }
+  return { opened, closed }
 }
 
 /**
- * Recover token usage from a partial/complete stream when the terminal `result`
- * event is missing (the transport SIGTERM'd the agent). Returns the LAST
- * usage-bearing event's tokens (assistant events carry a cumulative
- * `message.usage`); zeros if nothing usable was streamed.
+ * Recover token usage from the stream when the terminal `result` event is missing
+ * (the transport SIGTERM'd the agent) — so a killed run isn't billed $0.
+ * - If a `result` event IS present, its usage is authoritative (cumulative).
+ * - Otherwise (killed mid-run) per-turn `assistant` usage is NOT cumulative, so we
+ *   SUM `output_tokens` across turns and take the last seen input/cache-read.
+ * Zeros if nothing usable was streamed.
  */
+const usageNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+function usageOf(
+  obj: Record<string, unknown>,
+):
+  | { input_tokens?: unknown; output_tokens?: unknown; cache_read_input_tokens?: unknown }
+  | undefined {
+  const message = obj.message as { usage?: unknown } | undefined
+  return (obj.usage ?? message?.usage) as ReturnType<typeof usageOf>
+}
+
 export function recoverUsageFromStream(stdout: string): {
   input: number
   output: number
   cacheRead?: number
 } {
-  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  let best: { input: number; output: number; cacheRead?: number } = { input: 0, output: 0 }
-  for (const obj of parseNdjsonObjects(stdout)) {
-    const message = obj.message as { usage?: unknown } | undefined
-    const usage = (obj.usage ?? message?.usage) as
-      | { input_tokens?: unknown; output_tokens?: unknown; cache_read_input_tokens?: unknown }
-      | undefined
-    if (!usage) continue
-    const input = num(usage.input_tokens)
-    const output = num(usage.output_tokens)
-    const cacheRead = num(usage.cache_read_input_tokens)
-    if (input || output || cacheRead) {
-      best = { input, output, ...(cacheRead > 0 ? { cacheRead } : {}) }
+  const objs = parseNdjsonObjects(stdout)
+  const result = objs.find((o) => o.type === 'result')
+  if (result) {
+    const u = usageOf(result) ?? {}
+    const cacheRead = usageNum(u.cache_read_input_tokens)
+    return {
+      input: usageNum(u.input_tokens),
+      output: usageNum(u.output_tokens),
+      ...(cacheRead > 0 ? { cacheRead } : {}),
     }
   }
-  return best
+  let output = 0
+  let input = 0
+  let cacheRead = 0
+  for (const obj of objs) {
+    const u = usageOf(obj)
+    if (!u) continue
+    output += usageNum(u.output_tokens) // per-turn → accumulate
+    const i = usageNum(u.input_tokens)
+    if (i) input = i // last non-zero
+    const c = usageNum(u.cache_read_input_tokens)
+    if (c) cacheRead = c
+  }
+  return { input, output, ...(cacheRead > 0 ? { cacheRead } : {}) }
 }
 
 /**

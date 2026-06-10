@@ -7,17 +7,24 @@
  *     envelope, the legacy shape).
  *   - recoverUsageFromStream — recovers tokens from a partial stream after an
  *     idle/ceiling kill (#45), so a timed-out run isn't billed $0.
- *   - countToolUses / isSubagentTimeoutCause — progress + typed-cause helpers.
- * Fixtures match the live CLI output captured during the #45 probe.
+ *   - countToolTransitions / isSubagentTimeoutCause — tool-balance + typed-cause helpers.
+ * Plus behavioral tests of the transport's timers (#45) over a mocked `spawn` +
+ * fake timers — idle kill, idle reset on activity, ceiling, tool-aware suspension,
+ * and SIGTERM→SIGKILL escalation. Fixtures match the live CLI output from the probe.
  */
 
-import { describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  countToolUses,
+  ClaudeCodeCliTransport,
+  countToolTransitions,
   isSubagentTimeoutCause,
   parseDispatchPayload,
   recoverUsageFromStream,
 } from './claude-code-subagent.js'
+
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
+import { spawn } from 'node:child_process'
 
 /** A realistic stream-json stdout: system init → partial deltas → assistant → result. */
 const streamJsonStdout = [
@@ -170,12 +177,159 @@ describe('recoverUsageFromStream (#45 — cost recovery on kill)', () => {
     expect(tokens.output).toBe(0)
     expect(tokens.cacheRead).toBeUndefined()
   })
+
+  it('SUMS output across multi-turn assistant events when no result arrived (#45)', () => {
+    // Per-turn assistant usage is NOT cumulative — summing avoids under-billing a
+    // long, killed tool loop.
+    const multiTurn = [
+      JSON.stringify({ type: 'assistant', message: { usage: { output_tokens: 80 } } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result' }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { usage: { input_tokens: 5, output_tokens: 120, cache_read_input_tokens: 200 } },
+      }),
+    ].join('\n')
+    const tokens = recoverUsageFromStream(multiTurn)
+    expect(tokens.output).toBe(200) // 80 + 120
+    expect(tokens.input).toBe(5)
+    expect(tokens.cacheRead).toBe(200)
+  })
 })
 
-describe('countToolUses', () => {
-  it('counts tool_use occurrences in a chunk', () => {
-    expect(countToolUses('"type":"tool_use" ... "type": "tool_use"')).toBe(2)
-    expect(countToolUses('no tools here')).toBe(0)
+describe('countToolTransitions', () => {
+  it('opens on assistant tool_use blocks', () => {
+    const obj = {
+      type: 'assistant',
+      message: { content: [{ type: 'text' }, { type: 'tool_use' }, { type: 'tool_use' }] },
+    }
+    expect(countToolTransitions(obj)).toEqual({ opened: 2, closed: 0 })
+  })
+  it('closes on user tool_result blocks', () => {
+    const obj = { type: 'user', message: { content: [{ type: 'tool_result' }] } }
+    expect(countToolTransitions(obj)).toEqual({ opened: 0, closed: 1 })
+  })
+  it('is neutral for events without tool blocks', () => {
+    expect(countToolTransitions({ type: 'result', result: 'ok' })).toEqual({ opened: 0, closed: 0 })
+  })
+})
+
+// ─── Transport timer behavior (#45) ──────────────────────────────────────────
+// A fake child (EventEmitter) + fake timers let us assert the kill logic without
+// spawning `claude`. pid is left undefined so signalGroup falls back to child.kill
+// (never touching a real process group from a test).
+function makeFakeChild() {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter
+    stderr: EventEmitter
+    pid: number | undefined
+    kill: ReturnType<typeof vi.fn>
+  }
+  child.stdout = new EventEmitter()
+  child.stderr = new EventEmitter()
+  child.pid = undefined
+  child.kill = vi.fn()
+  return child
+}
+
+const DISPATCH = {
+  userMessage: 'u',
+  systemPrompt: 's',
+  model: 'claude-haiku-4-5-20251001',
+  temperature: 0,
+  cwd: '/tmp',
+  idleTimeoutSec: 10,
+  ceilingSec: 100,
+}
+
+describe('ClaudeCodeCliTransport timers (#45)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('idle-kills after silence and reports reason=idle with recovered cost', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+    // an assistant turn (tokens to recover), then the tool COMPLETED (no open tool)
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'assistant', message: { usage: { output_tokens: 30 } } })}\n`,
+      ),
+    )
+    await vi.advanceTimersByTimeAsync(10_000) // idle window with no further output
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('subagent.timeout')
+    expect(isSubagentTimeoutCause(r.error.cause)).toBe(true)
+    if (!isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('idle')
+    expect(r.error.cause.recoveredTokens.output).toBe(30)
+  })
+
+  it('does NOT idle-kill while a tool call is outstanding (tool-aware)', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+    // assistant opens a tool call but no tool_result yet → agent is blocked on a tool
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use' }] } })}\n`,
+      ),
+    )
+    await vi.advanceTimersByTimeAsync(50_000) // 5× the idle window, silent
+    expect(child.kill).not.toHaveBeenCalled() // tool in flight → not idle-killed
+    await vi.advanceTimersByTimeAsync(60_000) // now past the 100s ceiling
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('ceiling')
+  })
+
+  it('escalates to SIGKILL if the child ignores SIGTERM', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+    await vi.advanceTimersByTimeAsync(10_000) // idle fires
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    await vi.advanceTimersByTimeAsync(10_000) // SIGKILL grace elapses, no close
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    child.emit('close', null)
+    await p
+  })
+
+  it('activity resets the idle timer; a clean result resolves success', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+    // ping output every 6s for 30s — never idle (window is 10s), never killed
+    for (let i = 0; i < 5; i++) {
+      child.stdout.emit('data', Buffer.from(`${JSON.stringify({ type: 'system' })}\n`))
+      await vi.advanceTimersByTimeAsync(6_000)
+    }
+    expect(child.kill).not.toHaveBeenCalled()
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'result', is_error: false, result: 'done', total_cost_usd: 0.02, usage: { input_tokens: 3, output_tokens: 7 } })}\n`,
+      ),
+    )
+    child.emit('close', 0)
+    const r = await p
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.rawText).toBe('done')
+    expect(r.value.costUsd).toBe(0.02)
   })
 })
 
