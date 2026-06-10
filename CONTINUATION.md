@@ -28,6 +28,26 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-10 (session close) — Phase 0 ~done: #49/#54/#55 merged · budget guard LIVE · dashboard token self-lockout
+
+**State (disk/GitHub):** `main` @ `6b8ee03`. Phase-0 (personal-v1 plan) = **4 of 6 items merged; 2 remain.**
+- **#49 MERGED** — IMP-36 dashboard auth: CSRF + same-Origin + bearer/`csrfToken` (timing-safe) + 409 idempotency on `POST /api/queue/<id>` (new `dashboard/auth.ts`). **Token REQUIRED** — `SDLC_DASHBOARD_TOKEN`, fail-fast at startup, **no auto-gen** (operator decision). Stale CLI "no auth" warnings corrected.
+- **#54 MERGED** — GH#30: cost-estimate fallback now reachable (`parseDispatchPayload` leaves cost `undefined` when the CLI omits it → `base.ts` uses `estimateCost`, no silent $0). Accuracy prereq for the guard. (#30 stays open: error-diagnostics + JSON-tolerance follow-ups.)
+- **#55 MERGED** — IMP-14 budget guard **LIVE** (⏰ beat June-15): `orchestrator/budget.ts` pauses NEW dispatch at ≥85% of the month's spend (global pool, summed across all repos' `.audit/`) + ntfy push; in-flight finishes. Cap = `SDLC_MONTHLY_BUDGET_USD` (default $100). Fail-open on aggregation error. Gated at both `dispatch.ts` chokepoints.
+- **#43 MERGED** (earlier) — GH#36 phantom-fixture docs fixed; **#36 CLOSED.**
+
+**Up next — finish Phase 0:** **PR-D** = zod envelope validation (IMP-02, under #31) — `agents/base.ts` + `types/` (Red-zone Tier 1 → needs `manager-approved`). **PR-E** = protected-files commit gate (IMP-03) — **read #34 + #9 first** (overlap). Then Phase 0 DONE.
+
+**Decisions locked:**
+- **Dashboard auth phasing:** CSRF/token for laptop-only now; "Sign in with Google" (OIDC — free, single-email, 2FA via Google) = Phase 2, **trigger = cross-device use OR sharing with another person** (filed **#51**, P3). Needs a public URL/tunnel — same prereq as **#48** (P2, ntfy action buttons).
+- **Token self-lockout:** `~/.claude/settings.json` `permissions.deny` + `PreToolUse` hook (`~/.claude/hooks/block-dashboard-token.sh`) block the AGENT from reading `SDLC_DASHBOARD_TOKEN` / keychain `sdlc-dashboard-token` — even if explicitly asked (harness-enforced). Token lives in the macOS keychain, injected only at dashboard launch (a separate terminal, never via the agent).
+- **Logging model:** `CONTINUATION.md` = the running log (THIS is the primary build session); strong checkpoints → `docs/checkpoints/`; `journey/` devlog RETIRED. Multi-session lesson: don't bundle a CONTINUATION entry into a feature branch (top-of-file conflict vs #44) — update it as its own `docs(continuation)` PR after the feature PRs (this entry IS that PR).
+- **Worktree-per-session:** each PR built in its own `git worktree` (PR-A..C).
+
+**Env / facts:** Node 22 (`/opt/homebrew/opt/node@22/bin`), pnpm 10; full gate = typecheck + lint + `check` (biome) + test. GitHub had an API-auth incident 2026-06-10 (~15:20 UTC) — `gh pr create` (GraphQL) 401'd; REST `gh api -X POST .../pulls` was the workaround. Red-zone (`router/`, `orchestrator/index.ts`, `types/`, `CLAUDE.md`, audit-log/file-ops/rollback, workflows) → `manager-approved` label gate; non-Red-zone → MANAGER merge only.
+
+**Reference:** personal-v1 plan `meta/plans/2026-06-05-aisdlc-personal-v1-PLAN.md` (vault) · `docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md`.
+
 ### 2026-06-10 — Phase 0: #43 merged (GH#36) · journey→CONTINUATION logging set · PR-B dashboard auth open · #48 filed
 
 **State (disk/GitHub):** `main` @ `856205e`. Phase-0 underway (personal-v1 plan: 6 safety items).
