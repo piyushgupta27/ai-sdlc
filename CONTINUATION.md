@@ -28,6 +28,83 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-08 — Stage-2 dogfood + learnings-review CLOSED · 3 PRs merged
+
+**State:** all 3 PRs merged to main:
+- career-automation #62 (dogfood output: Map refactor + `.audit` gitignore)
+- ai-sdlc #40 (onboard: seed artifact gitignores + drop develop-default)
+- ai-sdlc #42 (canonical CLAUDE.md output + testbed-duty rules)
+
+**Learnings-review applied:** 3 global hard rules in `~/.claude/CLAUDE.md` (lead-with-decision · fix-isn't-done-until-siblings-checked · origin-check); ai-sdlc canonical rules (#42); weekly log at ai-workspace `self/reviews/weekly/2026-06-08.md`.
+
+**Principle locked with MANAGER:** automate only machine-verifiable checks; judgment rules → hard rules in CLAUDE.md, **force-propagated by onboarding**, presence-verified (adherence stays human review). A half-enforced rule is worse than none (false confidence).
+
+**Up next (queued):** **#41** (P1 — build `sdlc doctor` + onboarding force-propagation of canonical rules/automations + drift verify) · **#26** (P1 — PR-template propagation + CI completeness gate + REPORTER voice) · **#38** (BUILDER/TESTER use `validationCommands`, not hardcoded pnpm) · **#39** (REQUIREMENTS/ARCH/ROADMAP/PLAN develop→main doc cleanup) · mind-palace **#14** (vault re-sync after #39). Then resume the parallelism "movie" (worktree #19 + TEAM-LEAD).
+
+### 2026-06-06 — STAGE 2 dogfood CLOSED OUT · 2 PRs open for MANAGER merge · 3 platform issues filed
+
+**Outcome: dogfood validated the cross-repo flow end-to-end + drove its own fixes.** Two PRs await MANAGER merge:
+- **career-automation #62** (https://github.com/piyushgupta27/career-automation/pull/62) — the pipeline's output: BUILDER (Sonnet 4.6) perf refactor of `summariseCategories` (O(1) Map) + unit test, **+** `.gitignore` for `.audit/`/`.sdlc-queue/` (fixes the false-alarm locally). feature/gh-46, 2 commits, lint clean.
+- **ai-sdlc #40** (https://github.com/piyushgupta27/ai-sdlc/pull/40) — `fix(onboard)`: seed `.audit/`+`.sdlc-queue/` into target `.gitignore` (#37) + drop the `develop`-branch default from onboarding output (#39). Gate green (typecheck/check/53 tests). Closes #37.
+
+**Platform issues filed (manager+dev style per user feedback):** ai-sdlc **#37** (`.audit` lint pollution — class: gates measure ambient repo state not the delta; ties to hermetic worktree #19), **#38** (BUILDER/TESTER self-validation hardcodes pnpm instead of `validationCommands` — Node-split fragility), **#39** (retire develop-default; REQUIREMENTS/ARCH/ROADMAP/PLAN doc-text cleanup still open). mind-palace **#14** (re-sync vault doc copies after #39).
+
+**Decisions locked with MANAGER:** Option A dogfood (observe the break) → it surfaced the `.audit` bug; keep the #46 change (land via #62); fix #37+#39 now (#40); #38 next session. User feedback saved to memory `[[feedback_writeup_manager_dev_balance]]` — issues/PRs lead with plain What + Why-it-matters, then dev detail.
+
+**State:** career-automation back on `main` (my continuation edit restored); ai-sdlc on branch `fix/onboard-seed-artifact-ignores-and-main-target`. This CONTINUATION edit is uncommitted (rides next commit).
+
+**Up next (if "keep going"):** MANAGER merges #62 + #40. Then: #39 doc-text cleanup (REQUIREMENTS R-AISDLC-103/Q-AI-24 → mark superseded, main is default) + mind-palace #14 sync; #38 (thread validationCommands into BUILDER/TESTER self-check); then resume the "movie" (parallelism: worktree #19 + TEAM-LEAD) or drain the career-automation research queue.
+
+### 2026-06-05 — STAGE 2 dogfood RAN END-TO-END · CHECKER fired (ESCALATE) · platform bug found (.audit lint pollution)
+
+**Outcome: SUCCESS as a validation run.** Dispatched #46 (`--task-spec`, Option A) on career-automation. The full pipeline executed: **BUILD✓ → TEST✓ → REVIEW✓ → CHECK=escalated**. Result HITL-PENDING. **Cost $1.91**, 271s, 4 hash-chained audit rows in `career-automation/.audit/2026-06-05/audit.jsonl`.
+
+**What worked:**
+- Cross-repo dispatch + orchestrator + CHECKER gate all fired. CHECK row has a populated `validations` matrix `{tsc:pass, lint:fail, tests:pass}` + `CHECKER ESCALATE (conf 0.85)` + real per-stage cost.
+- **Node-20 pin WORKED**: H1 re-run `tests=pass` (dodged the 73 Node-22 better-sqlite3 failures). The Option-A risk didn't bite — the BUILDER judged the Node-22 failures pre-existing and committed anyway.
+- Commit `f2d233b` on `feature/gh-46` is **correctly scoped** — only `src/agents/sourcing/rejection-categories.ts` (+6/-1) + `tests/unit/sourcing-rejection-categories.test.ts` (+26). **No Stripe/data sweep** — explicit staging held. The refactor is correct (`CATEGORY_LABEL_MAP` Map, `map.get(k) ?? k`).
+
+**PLATFORM BUG (caused the escalation):** `.audit/` is not in career-automation's `.gitignore` or `biome.json` ignore, and onboarding never adds it. So the H1 `biome check .` lints the orchestrator's OWN output (`.audit/.chain-tip.json`, `audit.jsonl` — missing trailing newline) → false `lint=fail` → false CHECKER ESCALATE. **Proof the code is clean: `biome check src tests` passes (157 files, 0 errors).**
+
+**Platform issues to file (deliverable):** (1) P1 onboarding must exclude `.audit/` from target lint/VCS ignores [+ orchestrator should write biome-clean audit files]; (2) P2 BUILDER/TESTER self-validation hardcodes `pnpm run` instead of project `validationCommands` (Node-split fragility); (3) P3 onboard suggests `develop` but dispatch PRs against `main`.
+
+**State / cleanup pending:** career-automation is on `feature/gh-46` with commit `f2d233b`; my `tasks/continuation.md` edit is STASHED (`stash@{0}`); `.audit/` untracked artifacts present. MANAGER decision pending: (a) land the change — add `.audit/` to ignores so lint passes, push + `gh pr create --base main`, MANAGER merges; or (b) validation-only — checkout main, restore stash, keep/delete branch. Either way: file the 3 platform issues.
+
+### 2026-06-05 — STAGE 2 dogfood IN PROGRESS · onboarded career-automation · BLOCKED on Node-split decision (pre-dispatch)
+
+**State:** Driving from ai-sdlc (Node 22, pnpm 10). career-automation onboarded; NOT yet dispatched (paused at a real decision gate).
+
+**Done this session:**
+- Prereqs verified: PRs #32/#33 merged (HEAD even with main); platform green (typecheck clean · check 1 known warning · 53/53 tests). Branch-protection resolved per kickoff doc = skip + compensating controls; `career-automation/.git/hooks/pre-push` (blocks direct main push) VERIFIED present.
+- Onboarded: `projects/career-automation/config.json` written; added `validationCommands` (typecheck/lint/test) pinned to **Node 20 via `/usr/local/bin`** — NOT `/opt/homebrew/opt/node@20` (that path doesn't exist; real Node 20 = `/usr/local/bin/node` v20.13.1). Baseline typecheck+lint green under the pin.
+- Task chosen by MANAGER: **#46** (refactor `summariseCategories` → Map lookup in `src/agents/sourcing/rejection-categories.ts`; pure-logic, non-dashboard). Plan = `--task-spec` path (manual; does NOT auto-push — PR opened by hand after review), PR base=main.
+
+**BLOCKER (why paused):** the BUILDER prompt (`prompts/builder/v1.md` L18,38) runs its own pre-commit `pnpm run typecheck && lint && test`, inheriting the CLI's **Node 22** PATH. Verified: career-automation suite under Node 22 = **73 failed / 443 passed** (better-sqlite3 NODE_MODULE_VERSION). So the builder would fail/escalate on unrelated DB tests BEFORE the CHECKER fires. Orchestrator H1 re-run IS Node-20-pinned (correct); the builder/tester self-check is the gap. **Platform issue to file regardless:** BUILDER/TESTER self-validation must use `validationCommands`, not hardcoded `pnpm run`.
+
+**Decision pending with MANAGER (3 options):** (A) dispatch as-is, observe the break, file issue — won't see CHECKER; (B) **converge career-automation to Node 22 for the run** (`npm rebuild better-sqlite3` under 22 + switch validationCommands to plain npm) → suite green → reach CHECK→COMMIT → see CHECKER verdict + validations matrix + cost; reversible / aligned with issue #53; (C) patch the platform first (ai-sdlc PR). Recommended: B.
+
+**Also note (RISK B, mitigated):** career-automation tree is dirty — another session's untracked Stripe data (`data/applications/stripe/`, `data/resume/tailored/2026-05-stripe/`, `state/*`) + my modified `tasks/continuation.md`. Builder commits via its own Bash; mitigation = `--task-spec` path doesn't push (I review the commit diff before pushing) + project CLAUDE.md enforces explicit staging + I'll `git stash push tasks/continuation.md` (pathspec, mine only) before dispatch. Do NOT touch the Stripe untracked files (not mine).
+
+**Up next (after MANAGER picks):** write `/tmp/ca-task.json` (full Task JSON, tier 4) → `pnpm sdlc dispatch --project career-automation --task-spec /tmp/ca-task.json` → read `career-automation/.audit/<date>/audit.jsonl` (confirm CHECK row: populated `validations` + CHECKER verdict + cost >$0) → review commit → manual push + `gh pr create --base main` → MANAGER merges.
+
+### 2026-06-05 — STAGE 1 DONE (CHECKER gate shipped + live-proven) · Stage 2 GO · compact checkpoint
+
+> **Full detail:** `docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md`. This entry is the resumable TL;DR.
+
+**State:** On `main` @ `b3fd5fc`, Node 22, clean tree (untracked: `.audit/`, `.gstack/`, the new checkpoint doc + `docs/plans/stage-2-career-automation-kickoff.md` — both ride the next PR). **Stage 1 (CHECKER quality gate + selective-feedback refire) is COMPLETE.**
+
+**Shipped + merged this session:** #27 (F5: real token/cost via `--output-format json`) · #28 (CHECKER contracts/agent/prompt, inert) · #29 (MANAGER-grade PR template) · #32 (**orchestrator wiring** — `runCheckGate`: Node deterministic re-verify [H1, closes F1] → CHECKER semantic audit → `shouldRefire` bounded refire `MAX=2` / G2 escalate; new `validations.ts`) · #33 (Slice 2: REVIEWER findings unified to shared **P0–P3** rubric + `evidenceRef`; retired old Severity).
+
+**Live proof:** real dispatch on a throwaway `/tmp` repo → MERGED, the `CHECK·checker` audit row appeared with a populated `validations` matrix (F1 proven) + CHECKER PASS 0.95 + real $1.30 cost. The **REFIRE path is unit-tested but not yet filmed live** (agents did the task right first try); an engineered "take two" would show REFIRE→converge.
+
+**Safety (no branch protection on private-free repos → SKIP it, decided):** a `pre-push` hook blocking direct push/force-push to `main` is installed on all 5 managed repos (ai-sdlc, career-automation, piyush-portfolio, trip-research, ai-finance-tracker). Per-clone + bypassable with `--no-verify` → durable version = **#34** (onboarding auto-installs). Enforces governance §7 (PR-only) locally.
+
+**Stage 2 (career-automation) is GO** for a SUPERVISED dogfood (agent opens PRs; MANAGER merges). Kickoff: `docs/plans/stage-2-career-automation-kickoff.md`. Hybrid model — chores through the pipeline, complex work manual. Can run in a separate session.
+
+**Up next (RESUME HERE):** the MANAGER said *"we will keep building the platform, but before we start let me share something"* → **WAIT for that context first.** Then build toward the parallel "movie": planned next = **#19 (worktree isolation → parallel tasks)**, then **TEAM-LEAD** (auto-merge Tier 2–3). **#34** (onboarding hard-gating) is also high-value + small.
+
+**Open issues (on project board):** #19 #24 #25 #26 #30 #31 #34 #21 (+ TEAM-LEAD unbuilt). **Facts:** full CI gate = typecheck+lint+check+test+coverage; agent never merges Red-zone (MANAGER labels `manager-approved` + merges, auto-merge off); post-2026-06-15 $100/mo Agent-SDK budget → soft-budget guard before fan-out (~$1.30/Tier-4 dispatch).
+
 ### 2026-06-04 — PR1 (F5) MERGED · CHECKER contracts (#28) + PR template (#29) open & reviewed · PR3 next
 
 **State:** On `main` @ `689535e` (PR #27 squash-merged). Node 22. Stage-1 Slice-1 in progress.
@@ -372,6 +449,49 @@ a1c3064 Merge pull request #4 from piyushgupta27/fix/transport-agent-permissions
 ?? .audit/
 ?? .gstack/
 ?? docs/plans/checkpoint-2026-06-02-platform-security.md
+```
+
+### Task docs touched in last 7 days
+
+```
+(none in last 7 days)
+```
+
+---
+
+## Snapshot · 2026-06-05T16:48:10Z · manual compact
+
+| Field | Value |
+|---|---|
+| Project root | `/Users/piyush/Workspace/ai-sdlc` |
+| Branch | `main` |
+| CWD | `/Users/piyush/Workspace/ai-sdlc` |
+| Session | `16db1b3c-0d54-44b3-8527-10de0b944688` |
+| Transcript | `/Users/piyush/.claude/projects/-Users-piyush-Workspace-ai-workspace/16db1b3c-0d54-44b3-8527-10de0b944688.jsonl` |
+
+### Git log (last 10)
+
+```
+b3fd5fc feat(reviewer): align findings to the shared P0-P3 rubric + Deficiency schema (Stage 1, Slice 2) (#33)
+644cd4b feat(orchestrator): CHECKER quality gate + selective-feedback refire (Stage 1) (#32)
+7323daa chore(template): MANAGER-grade PR template v1 (clean style) (#29)
+fcdec3b feat(checker): CHECKER contracts, agent, prompt + model route (Stage 1, inert) (#28)
+689535e fix(transport): parse real token usage + cost via --output-format json (F5) (#27)
+9cb58f1 docs(continuation): record portfolio polish session — PRs #21 + #22 merged
+2ce09b2 Merge pull request #18 from piyushgupta27/chore/merge-strategy-team-lead
+13adf77 docs(governance): standardize squash-merge + merge queue + TEAM-LEAD merge role
+2dfbcd5 Merge pull request #8 from piyushgupta27/chore/approval-authorship-must
+3da988e docs(continuation): correct URL — site live at piyush-portfolio-topaz.vercel.app
+```
+
+### Uncommitted changes
+
+```
+M CONTINUATION.md
+?? .audit/
+?? .gstack/
+?? docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md
+?? docs/plans/stage-2-career-automation-kickoff.md
 ```
 
 ### Task docs touched in last 7 days
