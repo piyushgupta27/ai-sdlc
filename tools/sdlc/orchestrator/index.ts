@@ -26,6 +26,7 @@ import { runReporter } from '../agents/reporter/index.js'
 import { runReviewer } from '../agents/reviewer/index.js'
 import { runTester } from '../agents/tester/index.js'
 import { notify } from '../integrations/ntfy.js'
+import { isSubagentTimeoutCause } from '../router/claude-code-subagent.js'
 import { estimateCost } from '../router/select-model.js'
 import {
   type AppError,
@@ -935,6 +936,12 @@ async function finalizeFailure(
     inFlightTaskIds: s.inFlightTaskIds.filter((id) => id !== opts.task.id),
   }))
 
+  // #45: a subagent killed on idle/ceiling spent real tokens before SIGTERM, but
+  // its final cost envelope never arrived. The transport recovers that spend from
+  // the partial stream — bill it here so a timed-out run isn't logged as $0.
+  const costUsd =
+    totalCost + (isSubagentTimeoutCause(error.cause) ? error.cause.recoveredCostUsd : 0)
+
   // Return as a successful TaskRunOutcome with result='failed' — caller
   // still wants the metadata for audit + reporting; the underlying error
   // is captured in `notes`.
@@ -944,7 +951,7 @@ async function finalizeFailure(
     stage: 'BLOCKED',
     retriesUsed,
     auditRunIds,
-    costUsd: totalCost,
+    costUsd,
     durationMs: performance.now() - startTime,
     notes: `Agent error: ${error.code} — ${error.message}`,
   })

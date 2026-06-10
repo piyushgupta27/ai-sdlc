@@ -112,6 +112,10 @@ export async function runAgent<TPayload, TOutput>(
     model: route.model,
     temperature: route.temperature,
     cwd: opts.brief.targetRepo,
+    // Activity-based timeout (#45): the transport idle-kills genuinely-hung agents;
+    // here we only size the absolute ceiling by task category (tier) so heavy
+    // code+test work isn't capped like a trivial edit. Env overrides globally.
+    ceilingSec: ceilingSecForTier(opts.tier),
     ...(opts.brief.blastRadiusApproved
       ? { blastRadiusApproved: opts.brief.blastRadiusApproved }
       : {}),
@@ -131,6 +135,19 @@ export async function runAgent<TPayload, TOutput>(
     'claude-code-subagent',
   )
   return ok(result)
+}
+
+/**
+ * Absolute-ceiling seconds by task tier (#45). Trivial work (typos/docs) caps
+ * fast; Red-zone / large / careful tiers get headroom. The transport's idle timer
+ * bounds genuinely-hung agents regardless, so a generous ceiling is safe — it only
+ * fires for an agent that is *still streaming* past the cap. Env
+ * `SDLC_SUBAGENT_CEILING_SEC` (resolved in the transport) overrides globally.
+ */
+function ceilingSecForTier(tier: number): number {
+  if (tier >= 4) return 300 // trivial
+  if (tier >= 2) return 600 // standard feature work
+  return 1200 // tier 0/1 — Red-zone / complex / careful
 }
 
 function buildUserMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayload>): string {
