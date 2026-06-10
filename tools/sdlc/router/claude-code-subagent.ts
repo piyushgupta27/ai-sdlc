@@ -11,6 +11,7 @@
 import { spawn } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { type AppError, type ModelId, type Result, err, makeError, ok } from '../types/index.js'
+import { estimateCost } from './select-model.js'
 
 /**
  * Inputs to a single subagent dispatch.
@@ -26,7 +27,19 @@ export interface DispatchOpts {
   readonly temperature: number
   /** Working directory for the Claude session (target repo) */
   readonly cwd: string
-  /** Max seconds before we kill the process */
+  /**
+   * Activity-based idle timeout (#45): kill the agent only after this many
+   * seconds of *true silence* (no stream output). Reset on every stream line, so
+   * a working agent is never killed. Default 120s; env `SDLC_SUBAGENT_IDLE_SEC`.
+   */
+  readonly idleTimeoutSec?: number
+  /**
+   * Absolute wall-clock ceiling (#45): hard backstop on top of the idle timer,
+   * sized per task category by the caller. Default 600s; env
+   * `SDLC_SUBAGENT_CEILING_SEC`.
+   */
+  readonly ceilingSec?: number
+  /** @deprecated Use `ceilingSec`. Kept for back-compat; treated as the ceiling. */
   readonly timeoutSec?: number
   /** Optional: BLAST_RADIUS_APPROVED env passthrough for Red zone writes */
   readonly blastRadiusApproved?: string
@@ -57,11 +70,63 @@ export interface DispatchResponse {
 }
 
 /**
+ * Cause attached to a `subagent.timeout` AppError (#45). When the transport kills
+ * an agent (idle or ceiling) the final cost envelope never arrives, so we recover
+ * what was spent from the partial stream and surface it here — the orchestrator
+ * bills `recoveredCostUsd` against the task instead of logging $0, and `reason` /
+ * `toolCalls` explain the kill.
+ */
+export interface SubagentTimeoutCause {
+  readonly reason: 'idle' | 'ceiling'
+  readonly idleSec: number
+  readonly ceilingSec: number
+  readonly recoveredTokens: {
+    readonly input: number
+    readonly output: number
+    readonly cacheRead?: number
+  }
+  readonly recoveredCostUsd: number
+  readonly toolCalls: number
+  readonly lastActivityAgoMs: number
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/** Type guard so callers can read recovered cost from a timeout error without `any`. */
+export function isSubagentTimeoutCause(c: unknown): c is SubagentTimeoutCause {
+  return (
+    typeof c === 'object' &&
+    c !== null &&
+    'reason' in c &&
+    'recoveredCostUsd' in c &&
+    typeof (c as { recoveredCostUsd: unknown }).recoveredCostUsd === 'number'
+  )
+}
+
+/**
  * Transport contract — what every model backend implements.
  * v1 ships ClaudeCodeCliTransport; v1.5+ adds AnthropicSdkTransport, etc.
  */
 export interface SubagentTransport {
   dispatch(opts: DispatchOpts): Promise<Result<DispatchResponse, AppError>>
+}
+
+/**
+ * Idle/ceiling defaults (seconds) for activity-based liveness (#45). A working
+ * agent streams continuously → never idle-killed; the ceiling is the absolute
+ * backstop. Both overridable per-dispatch (DispatchOpts) or globally via env.
+ */
+const DEFAULT_IDLE_SEC = 120
+const DEFAULT_CEILING_SEC = 600
+/** How often to emit a live-progress line to stderr while an agent runs. */
+const PROGRESS_HEARTBEAT_MS = 15_000
+
+/** Parse a positive-number env var; undefined if unset/invalid. */
+function envSec(name: string): number | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 /**
@@ -142,17 +207,30 @@ function buildAgentEnv(blastRadiusApproved?: string): NodeJS.ProcessEnv {
 export class ClaudeCodeCliTransport implements SubagentTransport {
   async dispatch(opts: DispatchOpts): Promise<Result<DispatchResponse, AppError>> {
     const start = performance.now()
-    const timeoutSec = opts.timeoutSec ?? 300
+    // Precedence: env (operator's global override) > per-call (tier-sized by the
+    // caller) > constant default.
+    const idleSec = envSec('SDLC_SUBAGENT_IDLE_SEC') ?? opts.idleTimeoutSec ?? DEFAULT_IDLE_SEC
+    const ceilingSec =
+      envSec('SDLC_SUBAGENT_CEILING_SEC') ??
+      opts.ceilingSec ??
+      opts.timeoutSec ??
+      DEFAULT_CEILING_SEC
 
     return new Promise((resolve) => {
       const args = [
         '--print',
-        // Structured output: stdout is ONE JSON envelope whose `result` field
-        // holds the agent's text answer, plus exact token usage + real cost
-        // under `usage` / `total_cost_usd`. Replaces the old stderr regex that
-        // matched nothing in the current CLI and logged 0 tokens / $0 (F5).
+        // Activity-based liveness (#45): stream-json emits one JSON event per step
+        // (system/stream_event/assistant/result) AS the agent works, replacing the
+        // single buffered envelope that arrived only at the very end (zero mid-run
+        // signal). Each line resets the idle timer, so a productively-working agent
+        // is never killed; a hung one (no output) is killed on the idle threshold —
+        // faster than the old blind wall-clock. The terminal `result` event still
+        // carries `result` text + `usage` + `total_cost_usd` (F5). `--verbose` is
+        // REQUIRED by the CLI for stream-json under --print.
         '--output-format',
-        'json',
+        'stream-json',
+        '--verbose',
+        '--include-partial-messages',
         '--model',
         opts.model,
         // Agents run non-interactively (--print): there is no human to answer
@@ -183,23 +261,62 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
 
       let stdout = ''
       let stderr = ''
-      let timedOut = false
+      let killReason: 'idle' | 'ceiling' | null = null
+      let lastActivity = performance.now()
+      let toolCalls = 0
 
-      const timer = setTimeout(() => {
-        timedOut = true
+      // Ceiling: absolute backstop, NEVER reset.
+      const ceilingTimer = setTimeout(() => {
+        killReason = 'ceiling'
         child.kill('SIGTERM')
-      }, timeoutSec * 1000)
+      }, ceilingSec * 1000)
+
+      // Idle: reset on every stream line — output means the agent is alive.
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      const resetIdle = () => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+          killReason = 'idle'
+          child.kill('SIGTERM')
+        }, idleSec * 1000)
+      }
+      resetIdle()
+
+      // Live progress to stderr so `dispatch` shows activity, not a silent hang
+      // (#45 AC5). Read-only — the ntfy "extend?" HITL is deferred to #48.
+      const heartbeat = setInterval(() => {
+        const agoSec = Math.round((performance.now() - lastActivity) / 1000)
+        process.stderr.write(`[subagent] ${toolCalls} tool call(s); last activity ${agoSec}s ago\n`)
+      }, PROGRESS_HEARTBEAT_MS)
+
+      const clearTimers = () => {
+        clearTimeout(ceilingTimer)
+        clearTimeout(idleTimer)
+        clearInterval(heartbeat)
+      }
+
+      const onActivity = (text: string) => {
+        lastActivity = performance.now()
+        resetIdle()
+        toolCalls += countToolUses(text)
+      }
 
       child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8')
+        const text = chunk.toString('utf8')
+        stdout += text
+        onActivity(text)
       })
 
       child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8')
+        const text = chunk.toString('utf8')
+        stderr += text
+        // stderr output is liveness too, but carries no tool-use events.
+        lastActivity = performance.now()
+        resetIdle()
       })
 
       child.on('error', (cause) => {
-        clearTimeout(timer)
+        clearTimers()
         const isENoent =
           cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ENOENT'
         resolve(
@@ -221,15 +338,38 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       })
 
       child.on('close', (exitCode) => {
-        clearTimeout(timer)
+        clearTimers()
         const durationMs = performance.now() - start
 
-        if (timedOut) {
+        if (killReason) {
+          // The kill pre-empted the terminal envelope, so recover what was spent
+          // from the partial stream (else the run logs $0 — the bug #45 calls out).
+          // Tokens come from the last usage-bearing event; cost is estimated locally
+          // (the CLI's total_cost_usd only lands on the result event we never got).
+          const recoveredTokens = recoverUsageFromStream(stdout)
+          const cause: SubagentTimeoutCause = {
+            reason: killReason,
+            idleSec,
+            ceilingSec,
+            recoveredTokens,
+            recoveredCostUsd: estimateCost(opts.model, recoveredTokens),
+            toolCalls,
+            lastActivityAgoMs: Math.round(performance.now() - lastActivity),
+            stdout: stdout.slice(-2000),
+            stderr: stderr.slice(-2000),
+          }
+          const detail =
+            killReason === 'idle'
+              ? `no output for ${idleSec}s (idle timeout) — likely hung`
+              : `exceeded the ${ceilingSec}s ceiling while still active`
           resolve(
             err(
-              makeError('subagent.timeout', `Claude subagent exceeded ${timeoutSec}s timeout`, {
-                cause: { stdout, stderr },
-                fix: 'Increase timeoutSec for complex tasks, or simplify the brief',
+              makeError('subagent.timeout', `Claude subagent killed: ${detail}`, {
+                cause,
+                fix:
+                  killReason === 'idle'
+                    ? 'Agent produced no output for the idle window; inspect captured stderr/stdout.'
+                    : 'If the task is legitimately long, raise the ceiling for this tier or add a `large` label.',
               }),
             ),
           )
@@ -248,10 +388,10 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
           return
         }
 
-        // Parse the structured JSON envelope (--output-format json). The agent's
-        // text answer is `result`; token usage + real cost come from the same
-        // envelope (F5). A malformed/error envelope is a hard failure here — we
-        // never silently fall back to 0-token rows.
+        // Extract the stream's terminal `result` event (--output-format stream-json):
+        // it holds the agent's `result` text + `usage` + real cost (F5), same fields
+        // the old buffered envelope had. A malformed/error envelope is a hard failure
+        // here — we never silently fall back to 0-token rows.
         const payload = parseDispatchPayload(stdout)
         if (!payload.ok) {
           resolve(payload)
@@ -272,14 +412,66 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
   }
 }
 
+/** Parse newline-delimited JSON (stream-json) stdout into its object events. */
+function parseNdjsonObjects(stdout: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = []
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try {
+      const obj = JSON.parse(trimmed)
+      if (typeof obj === 'object' && obj !== null) out.push(obj as Record<string, unknown>)
+    } catch {
+      // Skip any non-JSON line (progress chatter, partial flush) — best-effort.
+    }
+  }
+  return out
+}
+
+/** Count `tool_use` occurrences in a stream chunk — best-effort progress signal. */
+export function countToolUses(text: string): number {
+  return (text.match(/"type":\s*"tool_use"/g) ?? []).length
+}
+
 /**
- * Parse the `claude --print --output-format json` stdout envelope.
+ * Recover token usage from a partial/complete stream when the terminal `result`
+ * event is missing (the transport SIGTERM'd the agent). Returns the LAST
+ * usage-bearing event's tokens (assistant events carry a cumulative
+ * `message.usage`); zeros if nothing usable was streamed.
+ */
+export function recoverUsageFromStream(stdout: string): {
+  input: number
+  output: number
+  cacheRead?: number
+} {
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  let best: { input: number; output: number; cacheRead?: number } = { input: 0, output: 0 }
+  for (const obj of parseNdjsonObjects(stdout)) {
+    const message = obj.message as { usage?: unknown } | undefined
+    const usage = (obj.usage ?? message?.usage) as
+      | { input_tokens?: unknown; output_tokens?: unknown; cache_read_input_tokens?: unknown }
+      | undefined
+    if (!usage) continue
+    const input = num(usage.input_tokens)
+    const output = num(usage.output_tokens)
+    const cacheRead = num(usage.cache_read_input_tokens)
+    if (input || output || cacheRead) {
+      best = { input, output, ...(cacheRead > 0 ? { cacheRead } : {}) }
+    }
+  }
+  return best
+}
+
+/**
+ * Parse the `claude --print --output-format stream-json` stdout.
  *
- * The CLI prints ONE JSON object whose `result` field holds the agent's text
- * answer, with exact token usage under `usage` and real cost under
- * `total_cost_usd`. This replaces the old best-effort stderr regex (finding
- * F5), which matched nothing in the current CLI and logged every run as 0
- * tokens / $0 — breaking the cost audit (G4) and per-agent budgets (G5).
+ * stream-json is newline-delimited: one JSON event per line, ending with a
+ * terminal `{ "type": "result", ... }` event whose `result` field holds the
+ * agent's text answer, with token usage under `usage` and real cost under
+ * `total_cost_usd`. We pick that result event (falling back to the sole/last
+ * object so a bare single-envelope — e.g. a unit-test fixture — still parses).
+ * Replaces the old buffered single-JSON parse + the F5 stderr regex that logged
+ * every run as 0 tokens / $0 (broke the cost audit G4 + per-agent budgets G5).
  *
  * Pure + exported so it can be unit-tested without spawning a process.
  */
@@ -291,34 +483,23 @@ export interface ParsedDispatch {
 }
 
 export function parseDispatchPayload(stdout: string): Result<ParsedDispatch, AppError> {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stdout)
-  } catch (cause) {
+  const objs = parseNdjsonObjects(stdout)
+  if (objs.length === 0) {
     return err(
       makeError(
         'subagent.invalid-json',
-        'claude CLI did not emit valid JSON (expected --output-format json)',
+        'claude CLI did not emit valid JSON (expected --output-format stream-json)',
         {
-          cause: {
-            stdout: stdout.slice(0, 800),
-            parseError: cause instanceof Error ? cause.message : String(cause),
-          },
-          fix: 'Ensure the spawned claude CLI supports `--output-format json`; inspect the captured stdout.',
+          cause: { stdout: stdout.slice(0, 800) },
+          fix: 'Ensure the spawned claude CLI supports `--output-format stream-json --verbose`; inspect the captured stdout.',
         },
       ),
     )
   }
 
-  if (typeof parsed !== 'object' || parsed === null) {
-    return err(
-      makeError('subagent.invalid-json', 'claude CLI JSON output was not an object', {
-        cause: { stdout: stdout.slice(0, 800) },
-      }),
-    )
-  }
-
-  const env = parsed as {
+  // The stream's terminal `result` event is authoritative; fall back to the last
+  // object so a legacy single-envelope payload still parses.
+  const env = (objs.find((o) => o.type === 'result') ?? objs[objs.length - 1]) as {
     is_error?: boolean
     result?: unknown
     total_cost_usd?: unknown
