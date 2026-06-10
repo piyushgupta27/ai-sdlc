@@ -28,6 +28,16 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-11 — [CA7 testbed] career-automation #45 SHIPPED via pipeline (PR #64) · first green end-to-end run
+
+> Cross-session marker from the **CareerAutomation_7** testbed session (owner-trimmed; full handoff content folded in here, source file deleted). Platform-side detail (#19 acceptance, #47/#62 sequencing) lives in the `#45 LANDED` entry below.
+
+- **First clean end-to-end pipeline run on a testbed:** career-automation #45 → **PR #64 MERGED** (BUILD✓ $0.74 · TEST✓ $0.60 · REVIEW✓ $1.24 · CHECK✓ $0.59 = $3.18, 868s, 0 retries; re-verified Node 20: 529/529; commits `35c3b4e`+`c9122da`, merge `03ab651`). Proves **#38** in the wild — TEST passed where it previously timed out on the 73 Node-22 better-sqlite3 failures.
+- **Filed ai-sdlc #62** (`trustState`×tier HITL gate not enforced — `MANUAL` is display-only, so a clean Tier-0/1 task auto-proceeds to COMMIT). Couples to #47 (don't ship the autonomous board path without it).
+- Dispatch ran in a **hand-built isolated worktree** — i.e. the #19 acceptance spec, done by hand. (career-automation rests at `03ab651`; CA7's checkout, prior-session WIP, not platform's.)
+
+**Reference docs:** `tasks/2026-06-10-prioritisation-prompt-for-aisdlc-from-ca7.md` (local working spec for #19/#47/#62 — untracked, removed once those land).
+
 ### 2026-06-10 (later) — #45 LANDED (PR #61 merged) · activity-based subagent timeout · BOTH testbed blockers cleared · NEXT = #19 → #47+#62 → PR-D/PR-E (after /compact)
 
 **State:** `main` @ `c90975c`. Both testbed blockers (#38 + #45) fixed + merged; worktree `ai-sdlc-gh45` removed. **#38 is already PROVEN end-to-end:** CA7 ran career-automation #45 green through the full pipeline (career-automation PR #64 — BUILD✓ TEST✓ REVIEW✓ CHECK✓ `{tsc:pass,lint:pass,tests:pass}`, $3.18, 868s, 0 retries, re-verified Node 20 529/529). So **do NOT re-dispatch ca-45** — it's done, and its checkout is CA7's (dirty tree, not ours). #45's timeout proof rests on its unit tests + the live CLI probe (a single >ceiling working-agent run isn't separately filmed; acceptable).
@@ -631,4 +641,46 @@ M CONTINUATION.md
 
 ```
 (none in last 7 days)
+```
+
+---
+
+## Snapshot · 2026-06-10T19:24:40Z · manual compact
+
+| Field | Value |
+|---|---|
+| Project root | `/Users/piyush/Workspace/ai-sdlc` |
+| Branch | `main` |
+| CWD | `/Users/piyush/Workspace/ai-sdlc` |
+| Session | `879fc803-039c-45e5-966c-990260283070` |
+| Transcript | `/Users/piyush/.claude/projects/-Users-piyush-Workspace-ai-workspace/879fc803-039c-45e5-966c-990260283070.jsonl` |
+
+### Git log (last 10)
+
+```
+13e732e docs(continuation): correct #45 entry — ca-45 already proven by CA7 (PR #64); next = #19 → #47+#62 → PR-D/PR-E (#68)
+f28552c docs(continuation): #45 landed (PR #61) — activity-based timeout; both testbed blockers cleared; ca-45 next (#67)
+c90975c fix(router): activity-based subagent timeout — idle liveness + tier ceiling + cost recovery (#45) (#61)
+434b08c docs(continuation): #38 landed (PR #59) — validationCommands in BUILDER/TESTER; #45 next (#60)
+359f1d7 fix(agents): thread per-project validationCommands into BUILDER/TESTER self-check (#38) (#59)
+d56e13a docs(continuation): preserve the career-automation dogfood session's entries (#58)
+91c1572 docs(continuation): pin testbed-blocker plans (#38/#45) + PR-D/PR-E gotchas (#57)
+fa5e9b6 docs(continuation): Phase-0 session close — #49/#54/#55 merged, decisions, next (#56)
+6b8ee03 fix(transport): keep the cost-estimate fallback reachable (GH#30) (#54)
+4271254 feat(orchestrator): monthly soft-budget guard (IMP-14) (#55)
+```
+
+### Uncommitted changes
+
+```
+?? docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md
+?? docs/plans/stage-2-career-automation-kickoff.md
+?? tasks/
+```
+
+### Task docs touched in last 7 days
+
+```
+tasks/2026-06-10-prioritisation-prompt-for-aisdlc-from-ca7.md
+tasks/session-2026-06-10-handoff-from-ca7-pr64.md
 ```
