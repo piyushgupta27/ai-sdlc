@@ -76,6 +76,48 @@ tags: [continuation, post-compact, resume]
 
 **Reference:** plan `meta/plans/2026-06-05-aisdlc-personal-v1-PLAN.md` (vault) · `docs/checkpoints/2026-06-05-stage1-shipped-stage2-go.md`.
 
+### 2026-06-10 — FIRST real pipeline run on career-automation (#45) BLOCKED on #38 · resume plan
+
+**What we were doing:** running career-automation's quick-win backlog through the ai-sdlc pipeline (supervised), starting with ticket **career-automation#45** to learn + observe the flow.
+
+**Career-automation backlog — shortlist (RoI eval, 2026-06-10). NB: these are `career-automation#` numbers — they collide with ai-sdlc's, so always qualify the repo.**
+- **High-RoI quick wins (pipeline first):** **#45** (in flight) · **#41** (sweep-rescan → propagate JD bodies into `sourced_roles.raw_json`; data quality).
+- **Pipeline fodder (low impact, ideal low-risk dogfood runs):** #43, #44, #47, #48 (dashboard/sourcing refactors). Avoid the security-sensitive `src/dashboard/server.ts` as a *first* run.
+- **Cheap wins:** #40 (make GitHub Projects public) · #57–60 (CLAUDE.md items: PR-lifecycle, session-start checklist, git-stash, MEMORY pointer).
+- **Bigger bets (manual, not pipeline):** **#53** (Node-22 convergence — *also* removes the #38 pipeline friction → highest leverage) · #35 (LinkedIn cookie removal) · #36 (Gmail/Calendar OAuth) · #37 (ATS live-submit Lever/Ashby) · #50 (dep CVEs) · #51 (94MB wav out of git).
+
+**What happened (the run):** dispatched career-automation **#45** (unify REJECTION_CATEGORIES/CATEGORY_KEYWORDS) via the `--task-spec` path (board path unusable — Project #3 lacks Ready/Building/… columns; that's ai-sdlc #47).
+- **BUILD succeeded** (Sonnet 4.6, $0.54): produced correct code — `CATEGORY_KEYWORD_MAP` + derived `CATEGORY_KEYWORDS` + coverage test. Committed on **career-automation `feature/gh-45` (commit `770b958`)**. VERIFIED sound: typecheck clean + new test passes under Node 20. **Not lost.**
+- **FAILED at TEST**: `subagent.timeout (300s)`. The TESTER ran the suite under Node 22, hit the ~73 pre-existing better-sqlite3 failures, burned its budget. Total $0.54, wall 551s.
+
+**BLOCKER = ai-sdlc #38 (now P1, `blocker` label).** Agents self-validate with hardcoded `pnpm run` under the CLI's Node instead of the project's `validationCommands` (Node-20-pinned). Raised as a cross-team dependency on the ai-sdlc session (prompt handed to user to paste). **Do NOT fix #38 from this session — another ai-sdlc session (`ai-sdlc-prB` worktree) is active; platform team owns it.**
+
+**RESUME once #38 lands (the checklist):**
+1. Confirm #38 merged.
+2. Re-dispatch: `cd ~/Workspace/ai-sdlc && export PATH="/opt/homebrew/opt/node@22/bin:$PATH" && pnpm sdlc dispatch --project career-automation --task-spec ~/.sdlc-tasks/ca-45.json` (durable copy saved 2026-06-10; `/tmp/ca-45.json` was the original). If both are gone, regenerate a full Task JSON for #45 (tier 4; ACs in the #45 issue body; the description MUST keep the "Node-22 DB-test failures are pre-existing — do not fix them" note).
+3. Before re-dispatch, delete the stale branch: `git -C ~/Workspace/career-automation branch -D feature/gh-45` (or salvage it — see below).
+4. Watch BUILD→TEST→REVIEW→CHECK→COMMIT; read audit `~/Workspace/career-automation/.audit/<date>/audit.jsonl`. Task-spec path stops at COMMIT (local branch) — push + open PR by hand after review.
+
+**Salvage option (if not waiting for #38):** `feature/gh-45` `770b958` is good — lint-check, push, open a career-automation PR manually (skips the pipeline's TEST/REVIEW/CHECK). Lands the fix but doesn't exercise the gates.
+
+**Interim unblock (if #38 is slow + you want the pipeline working sooner):** rebuild better-sqlite3 for Node 22 in career-automation (`/opt/homebrew/opt/node@22/bin/npm rebuild better-sqlite3`) → suite green on Node 22 → TESTER stops chasing the 73 failures → re-dispatch completes. This is a tenant-side hack for a platform bug (reverse with a Node-20 rebuild after, or pair with career-automation#53). The proper fix is ai-sdlc#38.
+
+**ACTION (do before compacting, if not already):** paste the #38 priority prompt into the active ai-sdlc session so it picks up the blocker. Recoverable either way — full evidence + the fix are in the ai-sdlc#38 comments (the session can pull it from the board).
+
+**Open ai-sdlc platform deps (testbed→platform loop, all on Project #1):** **#38 P1 blocker** (Node-split) · **#47 P1** (onboarding: board columns/labels/hooks — blocks the board-path "drop card → ship" flow) · **#26 P1** (PR-template propagation + CI gate + REPORTER voice) · #53 P2 (doctor: fetch + warn on stale local checkouts) · #50 P3 (doctor real-use eval). Done this stretch: #41/#46 (doctor merged), career-automation #63 (contract compliance merged → doctor all-green).
+
+**Note:** runbook for running ANY ticket = `--task-spec` until #47 lands the board columns. career-automation is compliant + onboarded but **supervised, not autonomous**.
+
+### 2026-06-10 — #41 `sdlc doctor` + onboarding force-propagation LANDED (PR #46 merged)
+
+**State:** `sdlc doctor` is on main (`345c88c`). Onboarding now force-writes the canonical rule-block into each repo's CLAUDE.md; `doctor [--project|--fix|--json]` verifies gitignore artifacts, `validationCommands`, the rule-block (present+drift), PR-template presence; nonzero exit on fail (CI-usable). Built in worktree `ai-sdlc-doctor` (now removed). Canonical source: `meta/templates/project-rules.md`; helpers in `tools/sdlc/cli/project-contract.ts`.
+
+**Proven:** 12 unit tests + live run on all 4 testbeds (correct findings) + a throwaway `--fix` round-trip (detect → fix → idempotent, no double-add → drift detected → repaired, 0 stale remnants).
+
+**Follow-ups (tracked, P-sorted):** #26 (P1 — PR-template propagation + CI completeness gate + REPORTER voice) · #47 (P2 — onboarding/doctor for board columns, labels, hooks) · #50 (P3 — evaluate doctor on real testbeds + harden + decide CI gate) · #38 (Node-split self-check) · #39 (develop→main doc cleanup) · mind-palace #14.
+
+**Note:** another session active in worktree `ai-sdlc-prB` (`feat/dashboard-auth-and-clickurl`) — isolated.
+
 ### 2026-06-08 — Stage-2 dogfood + learnings-review CLOSED · 3 PRs merged
 
 **State:** all 3 PRs merged to main:
