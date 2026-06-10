@@ -115,6 +115,11 @@ export async function runTask(opts: {
     inFlightTaskIds: [...s.inFlightTaskIds, opts.task.id],
   }))
 
+  // Per-project deterministic commands (#38): the BUILDER/TESTER run THESE for
+  // their pre-commit self-check, not a hardcoded `pnpm run` under the CLI's
+  // runtime. Loaded once; threaded into every BUILD/TEST payload below.
+  const validationCommands = await loadValidationCommands(opts.project)
+
   // ─── Iteration loop ──────────────────────────────────────────────────────
   while (retriesUsed <= 3) {
     const isRetry = retriesUsed > 0
@@ -131,6 +136,7 @@ export async function runTask(opts: {
           acceptanceCriteria: opts.task.dod.acceptanceCriteria,
           tier,
           branch: opts.branch,
+          ...(validationCommands ? { validationCommands } : {}),
           ...(isRetry ? { reviewerFeedback: 'See previous REVIEWER comments' } : {}),
         },
       },
@@ -189,6 +195,7 @@ export async function runTask(opts: {
           commitSha: buildOutput.commitSha,
           acceptanceCriteria: opts.task.dod.acceptanceCriteria,
           coverageFloor: opts.task.dod.coverageFloor,
+          ...(validationCommands ? { validationCommands } : {}),
         },
       },
       { tier, isRetry },
@@ -448,7 +455,7 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
       )
     }
 
-    const refire = await refireOwningProducers(ctx, opts, actionable)
+    const refire = await refireOwningProducers(ctx, opts, actionable, commands)
     if (!refire.ok) {
       return await finalizeFailure(
         opts,
@@ -474,6 +481,7 @@ async function refireOwningProducers(
   ctx: CheckGateCtx,
   opts: { project: ProjectSlug; task: Task; targetRepo: string; branch: string },
   deficiencies: readonly Deficiency[],
+  commands: ValidationCommands | undefined,
 ): Promise<Result<{ whatChanged: string }, AppError>> {
   const byOwner = new Map<DeficiencyOwner, Deficiency[]>()
   for (const d of deficiencies) {
@@ -500,6 +508,7 @@ async function refireOwningProducers(
             acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
             tier: ctx.tier,
             branch: ctx.branch,
+            ...(commands ? { validationCommands: commands } : {}),
             deficiencies: defs,
           },
         },
@@ -526,6 +535,7 @@ async function refireOwningProducers(
             commitSha: ctx.buildOutput.commitSha,
             acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
             coverageFloor: ctx.task.dod.coverageFloor,
+            ...(commands ? { validationCommands: commands } : {}),
             deficiencies: defs,
           },
         },
