@@ -28,6 +28,29 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-10 (later) — #45 LANDED (PR #61 merged) · activity-based subagent timeout · BOTH testbed blockers cleared · ca-45 re-dispatch next
+
+**State:** `main` @ `c90975c`. Both testbed blockers (#38 + #45) are now fixed + merged; worktree `ai-sdlc-gh45` removed. The career-automation pipeline is unblocked end-to-end — **next action is to re-dispatch career-automation #45 to PROVE it live** (neither PR has end-to-end proof yet; both were honest about that).
+
+**Just completed — #45 (PR #61; Red-zone Tier 1, `manager-approved` + MANAGER merge; 3 commits):** the blind 300s wall-clock subagent timeout is replaced with **activity-based liveness**.
+- Switched the transport to `--output-format stream-json --verbose --include-partial-messages` (probed live vs `claude 2.1.170`: one JSON event per step; terminal `result` event still carries `result`/`usage`/`total_cost_usd`; `--verbose` is required).
+- **Idle timer** (120s default) re-armed on every output byte; **tool-aware** — while a `tool_use` is outstanding (no matching `tool_result`) idle is suspended, because the CLI does NOT stream a foreground tool's mid-run output (verified: 27s silence during a 30s command), so idle-killing would also kill long-but-healthy tools. A mid-tool hang is therefore bounded by the **ceiling**, not idle (deliberate, documented).
+- **Ceiling** (absolute backstop) sized by tier in `base.ts` `ceilingSecForTier` (tier4=300 / tier2-3=600 / tier0-1=1200); idle+ceiling env-overridable (`SDLC_SUBAGENT_IDLE_SEC` / `_CEILING_SEC`).
+- **Kill** = SIGTERM to the process GROUP (spawn `detached`) → SIGKILL after a 10s grace (so a SIGTERM-ignoring child can't hang `dispatch`) + double-kill guard + ESRCH handling.
+- **Cost-on-kill:** recover tokens from the partial stream (sum per-turn output) + estimate cost → `finalizeFailure` bills it, so a timed-out run is no longer logged $0.
+- `parseDispatchPayload` extracts the terminal `result` event from NDJSON; `stream_event` partials excluded from the parse buffer (bounded memory). New `SubagentTimeoutCause` + `isSubagentTimeoutCause` guard.
+- Files: `router/claude-code-subagent.ts` (+test), `agents/base.ts`, `orchestrator/index.ts`.
+
+**Review depth (why it took 3 commits):** IC self-review + **two independent-reviewer rounds** + a final holistic review. Each round found real P1s the prior missed — SIGTERM-hang (commit 2), then ESRCH/type-gated-tool-count (commit 3). Final verdict: SHIP, only P3 cosmetics left. **Lesson reinforced:** fresh-context independent review materially outperforms self-review (motivates the v1.5 anti-monoculture/different-vendor REVIEWER fleet — REVIEWER is already Opus@0.7 cold-read, but same model family).
+
+**Deferred → filed as low-pri issues (none block anything):** #63 (estimateCost cache-token semantics — pre-existing) · #64 (surface CLI error subtype) · #65 (#38 threading test coverage) · #66 (#38 TESTER coverage-command parity). All P3.
+
+**Up next (RESUME HERE):** **re-dispatch career-automation #45** — the live end-to-end proof of #38+#45:
+1. `git -C ~/Workspace/career-automation branch -D feature/gh-45` (delete the stale branch from the prior failed run; or salvage `770b958`).
+2. `cd ~/Workspace/ai-sdlc && export PATH="/opt/homebrew/opt/node@22/bin:$PATH" && pnpm sdlc dispatch --project career-automation --task-spec ~/.sdlc-tasks/ca-45.json`
+3. Watch BUILD→TEST→REVIEW→CHECK→COMMIT; read `~/Workspace/career-automation/.audit/<date>/audit.jsonl`. Task-spec path stops at COMMIT (local branch) → push + open PR by hand after review. Costs ~$0.5–2.
+**Then:** Phase-0 **PR-D** (zod envelope validation, #31) + **PR-E** (protected-files commit gate, #34/#9) — gated on the user's 2 feature requests + a `/compact` per the pinned plan.
+
 ### 2026-06-10 (later) — #38 LANDED (PR #59 merged) · BUILDER/TESTER honor per-project validationCommands · #45 next
 
 **State:** `main` @ `359f1d7`. #38 (career-automation testbed blocker) is fixed + merged; worktree `ai-sdlc-gh38` removed. The career-automation pipeline can now be re-dispatched (#45 task spec at `~/.sdlc-tasks/ca-45.json`) — agents will validate under the project's Node-20 pin instead of the launcher's Node 22.
