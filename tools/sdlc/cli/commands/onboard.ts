@@ -24,6 +24,7 @@ import { join } from 'node:path'
 import { initialState, projectDir, writeState } from '../../orchestrator/state.js'
 import { type ProjectConfig, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
+import { injectRules, loadCanonicalRules } from '../project-contract.js'
 
 const HELP = `pnpm sdlc onboard — add a new project as an ai-sdlc testbed
 
@@ -137,6 +138,9 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
   // output (.audit/ audit log + .sdlc-queue/ HITL queue). See ai-sdlc#37.
   await seedGitignore(repo)
 
+  // 6. Force-write the canonical ai-sdlc rule-block into the target CLAUDE.md.
+  await seedRules(repo)
+
   process.stdout.write(`
 ✓ Onboarded ${slug}.
 
@@ -174,6 +178,25 @@ async function seedGitignore(repo: string): Promise<void> {
   const block = `${prefix}\n# ai-sdlc pipeline artifacts (audit log + HITL queue written into the working tree)\n${missing.join('\n')}\n`
   await appendFile(gitignorePath, block, 'utf8')
   process.stdout.write(`✓ Added ${missing.join(', ')} to ${gitignorePath}\n`)
+}
+
+/**
+ * Force-write the canonical ai-sdlc rule-block into the target repo's CLAUDE.md
+ * (idempotent). CLAUDE.md is guaranteed to exist by this point (skeleton written
+ * above if it was absent). See #41 / project-contract.ts.
+ */
+async function seedRules(repo: string): Promise<void> {
+  const claudeMdPath = join(repo, 'CLAUDE.md')
+  if (!existsSync(claudeMdPath)) return
+  const rules = await loadCanonicalRules()
+  const before = await readFile(claudeMdPath, 'utf8')
+  const after = injectRules(before, rules)
+  if (after === before) {
+    process.stdout.write('(ai-sdlc rule-block already current)\n')
+    return
+  }
+  await writeFile(claudeMdPath, after, 'utf8')
+  process.stdout.write(`✓ Wrote ai-sdlc rule-block to ${claudeMdPath}\n`)
 }
 
 function skeletonClaudeMd(slug: string, owner: string): string {

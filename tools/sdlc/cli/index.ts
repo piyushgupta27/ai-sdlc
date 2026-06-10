@@ -20,6 +20,7 @@
 import { runBoard } from './commands/board.js'
 import { runDashboard } from './commands/dashboard.js'
 import { runDispatch } from './commands/dispatch.js'
+import { runDoctor } from './commands/doctor.js'
 import { runLint } from './commands/lint.js'
 import { runOnboard } from './commands/onboard.js'
 import { runStatus } from './commands/status.js'
@@ -30,6 +31,7 @@ Usage: pnpm sdlc <command> [options]
 
 Project lifecycle
   onboard            Add a new project as a testbed
+  doctor             Verify projects satisfy the platform contract
   status             Show project state and pipeline health
 
 Pipeline operations
@@ -52,6 +54,7 @@ type CommandHandler = (argv: readonly string[]) => Promise<number>
 
 const COMMANDS: Record<string, CommandHandler> = {
   onboard: runOnboard,
+  doctor: runDoctor,
   lint: runLint,
   dispatch: runDispatch,
   status: runStatus,

@@ -20,7 +20,8 @@ out/
 # Runtime data
 .sdlc-sandboxes/
 .sdlc-queue/
-.audit/raw/
+.audit/
+.gstack/
 .cache/
 tmp/
 # Per-project state — config has machine-local repoPath; state mutates per run
