@@ -111,6 +111,19 @@ export interface BuilderPayload {
   readonly reviewerFeedback?: string
   /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
   readonly deficiencies?: readonly Deficiency[]
+  /**
+   * Per-project deterministic validation commands (from `config.json`,
+   * `ProjectConfig.validationCommands`). The BUILDER runs THESE for its
+   * pre-commit self-check instead of a hardcoded `pnpm run …`, so a project
+   * pinned to a specific toolchain (e.g. better-sqlite3 on Node 20) is validated
+   * under its own runtime rather than the CLI's (#38). Unset (or a missing key)
+   * → the agent falls back to `pnpm run <check>`.
+   */
+  readonly validationCommands?: {
+    readonly typecheck?: string
+    readonly lint?: string
+    readonly test?: string
+  }
 }
 
 export interface BuilderOutput {
@@ -127,6 +140,18 @@ export interface TesterPayload {
   readonly coverageFloor: number
   /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
   readonly deficiencies?: readonly Deficiency[]
+  /**
+   * Per-project deterministic validation commands (from `config.json`,
+   * `ProjectConfig.validationCommands`). The TESTER runs THESE (esp. the test
+   * command) instead of a hardcoded `pnpm run …`, so a project pinned to a
+   * specific toolchain is validated under its own runtime (#38). Unset (or a
+   * missing key) → the agent falls back to `pnpm run <check>`.
+   */
+  readonly validationCommands?: {
+    readonly typecheck?: string
+    readonly lint?: string
+    readonly test?: string
+  }
 }
 
 export interface TesterOutput {
