@@ -28,6 +28,18 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-10 (later) — PAUSED Phase-0 D/E for testbed blockers (#38 → #45); fix plans + D/E gotchas pinned
+
+**Why paused:** two dogfooding testbeds surfaced blockers; do these BEFORE PR-D/PR-E. After #38 + #45 + a `/compact` + 2 feature requests (user to share) → resume PR-D/PR-E.
+
+**#38 — career-automation blocker (DO FIRST).** BUILDER/TESTER self-validate with **hardcoded** `pnpm run typecheck/lint/test` — and the hardcoding is in the **PROMPTS** (`prompts/builder/v1.md:18` + `prompts/tester/v1.md:39`, read verbatim, **no template substitution**), under the launcher's Node 22, ignoring the project's `validationCommands`. career-automation is Node-20-pinned (better-sqlite3) → every dispatch dies at TEST (`subagent.timeout` 300s burned on ~73 pre-existing Node-22 failures). Orchestrator H1 re-run (`orchestrator/validations.ts` `runValidations`) already uses `validationCommands` correctly — bring BUILDER/TESTER in line. **Fix (verified via Explore):** (a) add `validationCommands?: {typecheck?;lint?;test?}` to `BuilderPayload` + `TesterPayload` (`types/agent.ts`); (b) populate via existing `loadValidationCommands` in `orchestrator/index.ts` at the BUILDER build (~L129) + TESTER build (~L188) + both refire sites (~L497/L525); (c) **REWRITE both prompts** to run the payload's `validationCommands` (fall back to `pnpm run <check>` if unset) — payload alone is inert without the prompt change. Red-zone (`types/` + `orchestrator/index.ts` → `manager-approved`). **`runtimeBinPath` does NOT exist in main** (parallel-session WIP never merged) → out of scope for #38; career-automation's `validationCommands` carry the Node-20 pin inline. Repro task spec: `~/.sdlc-tasks/ca-45.json`. Worktree: `ai-sdlc-gh38` (`fix/gh38-validation-commands`).
+
+**#45 — trip-research blocker (DO SECOND, after #38 merges).** Smart/activity-based subagent timeout (the `timeoutSec ?? 300` default in `router/claude-code-subagent.ts`). Same file as #38 → do after #38 merges (branch off updated main) to avoid the conflict. (Testbed also filed #52/#35 — details pending in the full request.)
+
+**PR-D / PR-E verify-before-build gotchas (pinned so they're not lost):**
+- **PR-D = zod envelope validation (IMP-02, #31):** zod discriminated unions per output contract (Builder/Tester/Reviewer/Checker + Deficiency) → parse failure = structured retry feedback; replaces the brace-balanced extraction in `agents/base.ts`. **Verify-before-build:** did PR #33 already add validation when it touched the Deficiency types? Fold the IMP-10 `decisions[]` audit field in here if trivial (same files). `agents/base.ts` + `types/` = Red-zone Tier 1.
+- **PR-E = protected-files commit gate (IMP-03, #34/#9):** pre-COMMIT deny-list (`.audit/`, `CLAUDE.md`, `prompts/`, `config.json`, `.github/`, lockfiles) → fail + escalate to G2. **Verify-before-build:** read **#34** (its scope-2 *is* literally this) + **#9**; build on the existing `tools/check-blast-radius.sh`. Acceptance: an agent diff touching `prompts/` → task fails with a G2 escalation, not a commit. Likely Red-zone.
+
 ### 2026-06-10 (session close) — Phase 0 ~done: #49/#54/#55 merged · budget guard LIVE · dashboard token self-lockout
 
 **State (disk/GitHub):** `main` @ `6b8ee03`. Phase-0 (personal-v1 plan) = **4 of 6 items merged; 2 remain.**
