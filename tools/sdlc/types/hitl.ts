@@ -1,7 +1,8 @@
 /**
  * HITL (Human-in-the-Loop) gate types — see HITL.md.
  *
- * Five gates: G1 (PLAN), G1.5 (ADR), G2 (REVIEW), G3 (DEMO), G5 (POST-MERGE).
+ * Gates: G1 (PLAN), G1.5 (ADR), G2 (REVIEW), G3 (DEMO), G4 (COMMIT — the
+ * trustState×tier gate, #62), G5 (POST-MERGE).
  * Gate records live at `.sdlc-queue/pending-hitl/<gate>-<id>.json` in the target repo.
  */
 
@@ -13,7 +14,7 @@ import type { Tier } from './task.js'
  * added as a refinement between G1 and G2, after the initial planning sessions.
  * The numeric ordering reflects the order in which gates fire in the pipeline.
  */
-export type GateId = 'G1' | 'G1.5' | 'G2' | 'G3' | 'G5'
+export type GateId = 'G1' | 'G1.5' | 'G2' | 'G3' | 'G4' | 'G5'
 
 /**
  * User's decision when responding to a HITL gate.
@@ -107,9 +108,9 @@ export interface HITLResponse {
  * Index signature lookup uses string concatenation: `TIER_GATE_MATRIX[tier][gate]`.
  */
 export const TIER_GATE_MATRIX: Readonly<Record<Tier, Readonly<Record<GateId, boolean>>>> = {
-  0: { G1: true, 'G1.5': true, G2: true, G3: true, G5: true },
-  1: { G1: true, 'G1.5': true, G2: true, G3: true, G5: true },
-  2: { G1: true, 'G1.5': false, G2: true, G3: true, G5: true }, // G1.5 heuristic-only; G2 on conf<0.85; G3 on diff>5%
-  3: { G1: false, 'G1.5': false, G2: false, G3: false, G5: true }, // most auto; G5 per-epic only
-  4: { G1: false, 'G1.5': false, G2: false, G3: false, G5: false },
+  0: { G1: true, 'G1.5': true, G2: true, G3: true, G4: true, G5: true },
+  1: { G1: true, 'G1.5': true, G2: true, G3: true, G4: true, G5: true },
+  2: { G1: true, 'G1.5': false, G2: true, G3: true, G4: true, G5: true }, // G1.5 heuristic-only; G2 on conf<0.85; G3 on diff>5%; G4 = COMMIT gate
+  3: { G1: false, 'G1.5': false, G2: false, G3: false, G4: false, G5: true }, // most auto; G5 per-epic only
+  4: { G1: false, 'G1.5': false, G2: false, G3: false, G4: false, G5: false },
 }

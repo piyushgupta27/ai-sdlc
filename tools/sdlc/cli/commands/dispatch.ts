@@ -154,6 +154,12 @@ async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Prom
       task,
       targetRepo: sandbox.value.workspacePath,
       branch,
+      // Manual path: the human who launched it is the gate, and it stops before
+      // merge (no maybeCreatePr here) — skip the trustState HITL gate (#62). The
+      // board path enforces it. CAUTION: this opt-out is only safe while the
+      // manual path never auto-pushes/merges; if it ever gains PR/push, the trust
+      // gate would be silently bypassed for autonomous use — re-gate it then.
+      enforceTrustGate: false,
     })
 
     if (!result.ok) {
@@ -243,6 +249,9 @@ async function dispatchFromBoard(
         task,
         targetRepo: sandbox.value.workspacePath,
         branch,
+        // Autonomous board path: enforce the trustState×tier HITL gate (#62) —
+        // no human is watching, so the trust ladder decides COMMIT vs. pause.
+        enforceTrustGate: true,
       })
 
       if (!result.ok) {
