@@ -38,13 +38,13 @@ The 6 KPIs a solo operator runs on:
 
 **Definition of "done" (6–12 mo):** *"I set a weekly roadmap Sunday, bulk-approve a PLANNER-decomposed epic tree in 30 min, and spend ≤1 hr/day clearing a ranked review digest while the fleet ships tier-3 unattended and queues tier-0/1 for me."*
 
-## 5. Economic model (and the one open decision)
-- Measured ground truth: career-automation #45 = **$3.18/PR** (BUILD $0.74 + TEST $0.60 + REVIEW $1.24 + CHECK $0.59).
-- **Guardian-Opus floor:** PLANNER + REVIEWER + CHECKER stay Opus *always* (quality floor, most critical on auto-merge tiers where no human looks) → per-PR floor ~**$2.50–3** even with Haiku labor. Tier-routing the *labor* (BUILDER/TESTER → Sonnet/Haiku for tier-3/4) is the cost lever; it does **not** touch the guardians.
-- Architecture additions are mostly deterministic/infra (evidence bundle, observability, durable exec) → ~$0 per-PR token cost. Only the cross-vendor gate reviewer adds tokens, scoped to the tier-0/1 tail.
-- **10–20 PRs/day ≈ $500–2,000/mo, NOT $100.** At volume you flip from review-bounded to token-bounded. Even $1.5K/mo is a bargain vs headcount (15 PRs/day > a junior dev at <20% of salary) — *if* the PRs are net-positive (requires auto-merge + PLANNER-leverage, or you pay to grow a queue you can't bless/feed).
-
-> **OPEN DECISION (owner):** set the budget/volume target. The plan's *work* is budget-agnostic; budget sets *how hard we push volume* and *when to upgrade the plan / go PAYG*. Measure actual $/PR + $/day on one real unattended run before committing.
+## 5. Economic / capacity model
+- Measured ground truth: career-automation #45 = **$3.18/PR** (BUILD $0.74 + TEST $0.60 + REVIEW $1.24 + CHECK $0.59) — but this is an **API-equivalent** figure, **not a bill**.
+- **The plan is a rate-limited subscription, not a metered dollar pool.** The $100 plan = a token **quota that refreshes every 5h** + a **weekly cap**. Per-PR cost does *not* deplete a dollar budget; the binding ceilings are the **5h/weekly rate window** and **human review throughput** — not dollars. **10–20 PRs/day is feasible on the current plan** if paced under the rate window.
+- **Guardian-Opus floor:** PLANNER+REVIEWER+CHECKER stay Opus *always* (quality floor, most critical on auto-merge tiers where no human looks). Tier-routing the *labor* (BUILDER/TESTER → Sonnet/Haiku for tier-3/4) optimizes token **volume** (= rate-window headroom), not a dollar bill.
+- Architecture additions are mostly deterministic/infra → ~0 extra tokens. Only the cross-vendor gate reviewer adds tokens, scoped to the tier-0/1 tail.
+- **The brake is therefore usage-window-aware, not dollar-metered (#87):** pace the fleet to ~**60–80%** of the 5h session quota during the owner's active window (**6PM–2AM IST** — leave personal headroom), **higher (~90–95%) off-hours**; fallback to estimated-tokens-by-tier + a configurable max cap if the quota-% isn't deterministically fetchable.
+- **Bottom line:** you hit the *review* wall (human merge throughput) and the *rate window* long before any dollar wall. "1 dev orchestrating agents" is economically real — as a **merge-authority** role.
 
 ## 6. Architecture decisions (settled)
 1. **ITP-0 is a trust-and-evidence problem, not plumbing.** Push+PR already works; what's missing is verifiable proof the gates held + observability + crash-safety + evals.
