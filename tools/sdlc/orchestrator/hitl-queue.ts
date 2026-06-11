@@ -15,6 +15,7 @@ import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/pro
 import { dirname, join } from 'node:path'
 import {
   type AppError,
+  type GateId,
   type HITLRequest,
   type HITLResponse,
   type Result,
@@ -148,7 +149,7 @@ export async function dequeue(targetRepo: string, gateId: string): Promise<Resul
  * Build a HITLRequest for the G2 REVIEW gate.
  * Convenience constructor used by the orchestrator.
  */
-export function buildG2Request(opts: {
+interface GateRequestOpts {
   readonly project: import('../types/index.js').ProjectSlug
   readonly taskId: string
   readonly epicId: string
@@ -159,11 +160,24 @@ export function buildG2Request(opts: {
   readonly reviewReportPath: string
   readonly auditRunPath: string
   readonly blockingTaskIds: readonly string[]
-}): HITLRequest {
-  const id = `hitl-G2-${formatDateStamp(new Date())}-${randomSuffix(3)}`
+}
+
+/** G2 — REVIEW-gate / quality-escalation HITL request. */
+export function buildG2Request(opts: GateRequestOpts): HITLRequest {
+  return buildGateRequest('G2', opts)
+}
+
+/** G4 — COMMIT-gate HITL request (the trustState×tier gate, #62). */
+export function buildG4Request(opts: GateRequestOpts): HITLRequest {
+  return buildGateRequest('G4', opts)
+}
+
+/** Shared gate-request shape. `gate` distinguishes the queue/dashboard record. */
+function buildGateRequest(gate: GateId, opts: GateRequestOpts): HITLRequest {
+  const id = `hitl-${gate}-${formatDateStamp(new Date())}-${randomSuffix(3)}`
   return {
     id,
-    gate: 'G2',
+    gate,
     tier: opts.tier,
     project: opts.project,
     taskId: opts.taskId,
