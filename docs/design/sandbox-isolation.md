@@ -63,6 +63,7 @@ Concurrent agents on one checkout corrupt each other (wrong-branch commits, dirt
 - Log every provision/teardown (taskId, workspacePath, branch, outcome) into the dispatch run output.
 - Teardown failures → surface as a warning + the manual `git worktree remove` command (already in `cleanup()` error `fix`).
 - Health signal: `git worktree list` should show no `.sdlc-sandboxes/*` entries after a clean run; orphans indicate a crash-cleanup miss.
+- **Orphan branches** accumulate on non-merged paths (`--task-spec`, `hitl-pending`, `failed`): cleanup removes the worktree but keeps the branch (it carries the work / a possible PR). A future sweep should prune branches with no open PR and no unpushed commits.
 - Future (#73): metric for in-flight sandboxes + disk used under `.sdlc-sandboxes/`; alert on orphan accumulation / disk bound.
 
 ## Testing — Unit / Integration / Dev / QA
@@ -78,7 +79,10 @@ Concurrent agents on one checkout corrupt each other (wrong-branch commits, dirt
 - **Disk:** one working-tree copy per concurrent run (removed by #72 CoW).
 
 ## Unknowns / Risks / Contingencies
-- **git-crypt** only exercised on testbeds (ai-sdlc has none) — `--no-checkout` + key-seed + `checkout` path; contingency: clear error on smudge failure.
+- **`baseRef`**: dispatch passes `baseRef: 'main'` (the integration branch), NOT the default `HEAD` — `HEAD` would base the feature branch off whatever the source checkout is on, re-introducing the wrong-branch hazard. (Found in independent review.)
+- **Re-dispatch branch safety**: `precleanStale` only deletes the branch when it also removed that branch's orphan worktree (our own incomplete run). A branch that exists with no worktree (a completed prior run, possibly an open PR) is left alone — `worktree add` then fails with a clear error rather than clobbering it.
+- **Crash teardown is O(N) blocking** (sync `git` per registered sandbox in the signal handler). Fine at N=1 (single-threaded today); revisit for #73 (concurrent dispatch) to bound shutdown latency.
+- **git-crypt** only exercised on testbeds (ai-sdlc has none) — `--no-checkout` + key-seed + `checkout` path; **not yet covered by an automated fixture test** (git-crypt may be absent in CI) → tracked gap; contingency: clear error on smudge failure.
 - **Audit chain contention** under future concurrency → #70 (out of scope here; today's single-threaded dispatch is safe).
 - **Symlinked `.audit`/`.sdlc-queue` × whole-repo gate** (#37): biome honors `.gitignore` (`.audit/`,`.sdlc-queue/` ignored) so no re-trigger; verify in #37.
 - **Nested worktree** inside the repo working tree — safe because gitignored; contingency: prune + idempotent re-provision.

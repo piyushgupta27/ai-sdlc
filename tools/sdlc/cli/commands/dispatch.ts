@@ -140,6 +140,7 @@ async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Prom
     repoPath: cfg.repoPath,
     taskId: task.id,
     branch,
+    baseRef: 'main',
   })
   if (!sandbox.ok) {
     process.stderr.write(`❌ ${sandbox.error.code} — ${sandbox.error.message}\n`)
@@ -228,6 +229,7 @@ async function dispatchFromBoard(
       repoPath: cfg.repoPath,
       taskId: task.id,
       branch,
+      baseRef: 'main',
     })
     if (!sandbox.ok) {
       process.stderr.write(`  ❌ ${sandbox.error.message}\n`)

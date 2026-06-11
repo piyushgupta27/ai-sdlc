@@ -198,4 +198,50 @@ describe('provisionWorktreeSandbox', () => {
     expect(count()).toBe(1)
     await r2.value.cleanup()
   })
+
+  it('refuses to clobber an existing branch with no worktree (possible open PR)', async () => {
+    const repo = setupRepo()
+    const first = await provisionWorktreeSandbox({
+      repoPath: repo,
+      taskId: 'gh-9',
+      branch: 'feature/gh-9',
+    })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    // cleanup removes the worktree but keeps the branch (it backs the PR).
+    await first.value.cleanup()
+    // Re-dispatching the same branch must NOT force-delete it — surfaces as an
+    // add failure instead of clobbering a branch that may have an open PR.
+    const second = await provisionWorktreeSandbox({
+      repoPath: repo,
+      taskId: 'gh-9',
+      branch: 'feature/gh-9',
+    })
+    expect(second.ok).toBe(false)
+    if (!second.ok) expect(second.error.code).toBe('sandbox.worktree_add_failed')
+  })
+
+  it('honors an explicit baseRef (branches off the integration ref, not HEAD)', async () => {
+    const repo = setupRepo()
+    const git = (args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' })
+    // Create an integration branch with a marker commit, then move HEAD away.
+    git(['branch', 'integration'])
+    git(['checkout', '-q', 'integration'])
+    writeFileSync(join(repo, 'INTEGRATION.md'), 'integration-only\n')
+    git(['add', 'INTEGRATION.md'])
+    git(['commit', '-qm', 'integration marker'])
+    git(['checkout', '-q', '-'])
+    // HEAD is back on the default branch (no INTEGRATION.md). Base off 'integration'.
+    const r = await provisionWorktreeSandbox({
+      repoPath: repo,
+      taskId: 'gh-10',
+      branch: 'feature/gh-10',
+      baseRef: 'integration',
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    // The worktree must reflect the baseRef, not the source checkout's HEAD.
+    expect(existsSync(join(r.value.workspacePath, 'INTEGRATION.md'))).toBe(true)
+    await r.value.cleanup()
+  })
 })

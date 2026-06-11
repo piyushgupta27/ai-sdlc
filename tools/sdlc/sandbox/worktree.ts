@@ -102,9 +102,14 @@ async function branchExists(repoPath: string, branch: string): Promise<boolean> 
 }
 
 /**
- * Remove a worktree + its branch if a stale copy exists (crash orphan or a
- * re-dispatch of the same task). Best-effort — errors are swallowed; a genuine
- * live concurrent run holding the branch will surface later as an `add` failure.
+ * Remove a stale worktree (crash orphan / re-dispatch of the same task).
+ * Best-effort — errors are swallowed.
+ *
+ * Branch deletion is deliberately conditional: we delete the branch ONLY when
+ * we just removed its orphan worktree (so it was our own incomplete run). A
+ * branch that exists WITHOUT a worktree is a completed prior run's branch —
+ * possibly backing an open PR — so we leave it untouched and let the subsequent
+ * `worktree add -b` fail with a clear error rather than clobber it.
  */
 async function precleanStale(
   repoPath: string,
@@ -112,10 +117,12 @@ async function precleanStale(
   branch: string,
 ): Promise<void> {
   await runGit(['-C', repoPath, 'worktree', 'prune'])
+  let worktreeRemoved = false
   if (existsSync(workspacePath)) {
     await runGit(['-C', repoPath, 'worktree', 'remove', '--force', workspacePath])
+    worktreeRemoved = true
   }
-  if (await branchExists(repoPath, branch)) {
+  if (worktreeRemoved && (await branchExists(repoPath, branch))) {
     await runGit(['-C', repoPath, 'branch', '-D', branch])
   }
   await runGit(['-C', repoPath, 'worktree', 'prune'])
@@ -207,7 +214,7 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
   if (add.code !== 0) {
     return err(
       makeError('sandbox.worktree_add_failed', `git worktree add failed: ${add.stderr.trim()}`, {
-        fix: 'A concurrent run may hold this branch, or the worktree dir is dirty. Check `git worktree list`.',
+        fix: `The branch '${branch}' may already exist from a prior run (possibly with an open PR), a concurrent run may hold it, or the worktree dir is dirty. Resolve/merge that PR or delete the branch, then retry. Check 'git worktree list' + 'git branch'.`,
       }),
     )
   }

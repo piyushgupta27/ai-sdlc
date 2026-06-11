@@ -21,7 +21,13 @@ export interface SandboxRequest {
   readonly taskId: string
   /** Feature branch the sandbox creates + checks out (e.g. `feature/gh-19`). */
   readonly branch: string
-  /** What to branch off. Default: the repo's current HEAD. */
+  /**
+   * What to branch off — should be the repo's integration branch (e.g. `main`),
+   * NOT a checkout-dependent ref. Defaults to `HEAD` only as a last resort;
+   * callers should pass the integration branch explicitly, because `HEAD`
+   * resolves against whatever branch the source checkout happens to be on (the
+   * exact wrong-branch hazard this sandbox exists to prevent).
+   */
   readonly baseRef?: string
 }
 
