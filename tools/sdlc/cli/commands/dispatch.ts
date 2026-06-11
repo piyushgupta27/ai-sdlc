@@ -26,6 +26,7 @@ import { parseDispatchTrigger, subscribe } from '../../integrations/ntfy.js'
 import { type BudgetDecision, PAUSE_THRESHOLD, budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
 import { projectDir, readState } from '../../orchestrator/state.js'
+import { provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { type ProjectSlug, type Task, type Tier, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 
@@ -134,19 +135,36 @@ async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Prom
     return 0
   }
 
-  const result = await runTask({
-    project: slug,
-    task,
-    targetRepo: cfg.repoPath,
-    branch: `feature/${task.id}`,
+  const branch = `feature/${task.id}`
+  const sandbox = await provisionWorktreeSandbox({
+    repoPath: cfg.repoPath,
+    taskId: task.id,
+    branch,
   })
-
-  if (!result.ok) {
-    process.stderr.write(`❌ ${result.error.code} — ${result.error.message}\n`)
-    if (result.error.fix) process.stderr.write(`   Fix: ${result.error.fix}\n`)
+  if (!sandbox.ok) {
+    process.stderr.write(`❌ ${sandbox.error.code} — ${sandbox.error.message}\n`)
+    if (sandbox.error.fix) process.stderr.write(`   Fix: ${sandbox.error.fix}\n`)
     return 1
   }
-  return printOutcome(result.value)
+
+  try {
+    const result = await runTask({
+      project: slug,
+      task,
+      targetRepo: sandbox.value.workspacePath,
+      branch,
+    })
+
+    if (!result.ok) {
+      process.stderr.write(`❌ ${result.error.code} — ${result.error.message}\n`)
+      if (result.error.fix) process.stderr.write(`   Fix: ${result.error.fix}\n`)
+      return 1
+    }
+    return printOutcome(result.value)
+  } finally {
+    const cleaned = await sandbox.value.cleanup()
+    if (!cleaned.ok) process.stderr.write(`   ⚠️  ${cleaned.error.message}\n`)
+  }
 }
 
 // ─── default: read Ready column on GH Project board ──────────────────────
@@ -202,57 +220,70 @@ async function dispatchFromBoard(
       `\n→ ${task.id} (#${next.content.number}) "${task.title}" [tier:${task.tier}]\n`,
     )
 
-    const result = await runTask({
-      project: slug,
-      task,
-      targetRepo: cfg.repoPath,
-      branch: `feature/${task.id}`,
+    // Each task runs in its own isolated worktree (#19). The orchestrator is
+    // unchanged — it just receives the sandbox path as targetRepo. The audit
+    // log + HITL queue are symlinked to the repo root, so they survive teardown.
+    const branch = `feature/${task.id}`
+    const sandbox = await provisionWorktreeSandbox({
+      repoPath: cfg.repoPath,
+      taskId: task.id,
+      branch,
     })
-
-    if (!result.ok) {
-      process.stderr.write(`  ❌ ${result.error.message}\n`)
+    if (!sandbox.ok) {
+      process.stderr.write(`  ❌ ${sandbox.error.message}\n`)
       await moveItem(project.value, next.id, 'Blocked')
-      await resetToMain(cfg.repoPath)
       return 1
     }
 
-    // Move card based on outcome
-    const outcome = result.value
-    const nextCol =
-      outcome.result === 'merged'
-        ? 'Done'
-        : outcome.result === 'hitl-pending'
-          ? 'Blocked'
-          : 'Blocked'
-    await moveItem(project.value, next.id, nextCol)
-    printOutcome(outcome)
-
-    // PR-creation step (the orchestrator hands off here per its design note).
-    // Only when there's an actual commit. No-op tasks (AC vacuously satisfied)
-    // get the card → Done without a PR — that's correct.
-    if (outcome.result === 'merged' && outcome.commitSha && outcome.branch) {
-      await maybeCreatePr({
-        repoPath: cfg.repoPath,
-        slug,
+    try {
+      const result = await runTask({
+        project: slug,
         task,
-        issueNumber: next.content.number,
-        branch: outcome.branch,
-        commitSha: outcome.commitSha,
+        targetRepo: sandbox.value.workspacePath,
+        branch,
       })
-    }
 
-    // Always reset to main after a task so the next iteration starts clean.
-    await resetToMain(cfg.repoPath)
+      if (!result.ok) {
+        process.stderr.write(`  ❌ ${result.error.message}\n`)
+        await moveItem(project.value, next.id, 'Blocked')
+        return 1
+      }
 
-    processed++
+      // Move card based on outcome
+      const outcome = result.value
+      const nextCol = outcome.result === 'merged' ? 'Done' : 'Blocked'
+      await moveItem(project.value, next.id, nextCol)
+      printOutcome(outcome)
 
-    // v1 prior behavior: break the loop on first HITL/failure. This made
-    // overnight autonomous runs impossible — one stuck ticket blocked the
-    // rest. Now: the card is already moved to Blocked above; just log and
-    // continue. The user reviews the Blocked queue in the morning. The
-    // exit code reflects "any failure" so CI can detect partial runs.
-    if (outcome.result === 'hitl-pending' || outcome.result === 'failed') {
-      process.stdout.write(`  (${task.id} blocked — continuing to next Ready item)\n`)
+      // PR-creation step (the orchestrator hands off here per its design note).
+      // Pushes from the sandbox worktree, where BUILDER committed. Only when
+      // there's an actual commit — no-op tasks get the card → Done without a PR.
+      if (outcome.result === 'merged' && outcome.commitSha && outcome.branch) {
+        await maybeCreatePr({
+          repoPath: sandbox.value.workspacePath,
+          slug,
+          task,
+          issueNumber: next.content.number,
+          branch: outcome.branch,
+          commitSha: outcome.commitSha,
+        })
+      }
+
+      processed++
+
+      // v1 prior behavior: break the loop on first HITL/failure. This made
+      // overnight autonomous runs impossible — one stuck ticket blocked the
+      // rest. Now: the card is already moved to Blocked above; just log and
+      // continue. The user reviews the Blocked queue in the morning. The
+      // exit code reflects "any failure" so CI can detect partial runs.
+      if (outcome.result === 'hitl-pending' || outcome.result === 'failed') {
+        process.stdout.write(`  (${task.id} blocked — continuing to next Ready item)\n`)
+      }
+    } finally {
+      // Tear down the worktree. The branch ref + committed work persist in the
+      // shared object store; audit + HITL records persist via the symlinks.
+      const cleaned = await sandbox.value.cleanup()
+      if (!cleaned.ok) process.stderr.write(`     ⚠️  ${cleaned.error.message}\n`)
     }
   }
 
@@ -471,21 +502,4 @@ async function maybeCreatePr(args: {
     return
   }
   process.stdout.write(`  ✓ PR opened: ${prResult.stdout.trim()}\n`)
-}
-
-/**
- * Reset the working tree to main after a task. Best-effort: if we can't
- * checkout (uncommitted changes, branch protection, etc.), log and continue.
- * The next iteration of the loop will likely fail loudly, which is correct.
- */
-async function resetToMain(repoPath: string): Promise<void> {
-  const result = await runShell('git', ['checkout', 'main'], repoPath)
-  if (result.code !== 0) {
-    process.stderr.write(
-      `  ⚠️  Could not checkout main after task — manual cleanup may be needed.\n`,
-    )
-    if (result.stderr) {
-      process.stderr.write(`     ${result.stderr.trim().split('\n').slice(0, 2).join('\n     ')}\n`)
-    }
-  }
 }
