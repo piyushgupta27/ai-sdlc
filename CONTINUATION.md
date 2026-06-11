@@ -28,6 +28,25 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-11 — #19 LANDED (PR #76 merged) · per-dispatch worktree isolation behind a Sandbox interface · NEXT = #62 → #47
+
+**State:** `main` @ `574b8ca`. #19 (worktree isolation) merged via PR #76; gh19 worktree removed. New `tools/sdlc/sandbox/` module (`Sandbox` interface + `WorktreeSandbox`); `dispatch.ts` provisions a worktree per task → passes `workspacePath` as `targetRepo` → `cleanup()` in finally; `resetToMain` removed. Orchestrator + router untouched → **zero red-zone**. TRD at `docs/design/sandbox-isolation.md` (first artifact in the team TRD template).
+
+**Just completed:**
+- **#19/PR #76** — `.sdlc-sandboxes/<task-id>/` worktree, git-crypt seed, node_modules symlink, `.audit`/`.sdlc-queue` symlinked to repo root (durable across teardown), idempotent + crash-safe provision, in-process mutex, `.git/info/exclude` hygiene. 10 sandbox / 124 total tests; CI green.
+- **Independent architect review** (cold-read) caught 2 real defects pre-merge → fixed in `9444aac`: P1 `baseRef` defaulted to `HEAD` (would re-introduce wrong-branch contamination) → now `baseRef:'main'`; P2 `precleanStale` could clobber a branch backing an open PR → now conditional. Review posted as PR comment.
+- **Big architecture decision (logged):** sandbox isolation = worktree NOW behind a swappable interface; deterministic/scalable end-state = microVM/gVisor on **remote Linux** (#71), NOT laptop containers (rejected as worse-middle — not a trust boundary for prompt-injectable agents; Mac = slow Linux VM). CoW (#72) answers "no duplicate dir."
+- **Tickets filed:** #70 (audit-chain concurrency, prereq for parallel) · #73 (concurrent dispatch) · #71 (MicroVmSandbox) · #72 (ApfsCloneSandbox) · #78 (pre-existing dispatch exit-code + card-state bugs) · #74 (eng-lifecycle standard) · #75 (TRD standard) · **#79 (quality-gate ENFORCEMENT epic — "memory is a prompt, not a gate"; generalize the 3-layer red-zone model)** · #80 (independent-review-evidence gate). Comment added to #10.
+
+**Up next (RESUME HERE):**
+1. **#62 — `trustState × tier → HITL@COMMIT` gate (Tier-1 RED-ZONE, needs `manager-approved` + merge).** Decided design: in `runTask`, before COMMIT, compute ladder from `state.trustState × task.tier` (MANUAL→all HITL; SUPERVISED→auto T4; TRUSTED_MID→auto T2-4; STEADY_STATE→auto T2-4, HITL T0/1) → route via existing HITL queue (`buildG2Request`/`enqueue`) → `hitl-pending`. **Gate guards the autonomous board path only; `--task-spec` short-circuits** (human in loop) — owner-confirmed. Pure ladder logic in a testable non-red-zone helper. Own worktree off main.
+2. **#47 — onboarding installs + doctor verifies board columns/labels/hooks** (mostly non-red-zone). Lands AFTER #62 (gate before the autonomous path).
+3. Then **PR-D** (zod envelope #31) / **PR-E** (protected-files gate #34/#9).
+
+**Open follow-ups:** branch protection on `main` (free — repo is PUBLIC, verified; user had said private but `gh` shows PUBLIC — clarify) is the cheapest enforcement teeth (#79/#9). #63–#66 P3.
+
+**Reference docs:** `docs/design/sandbox-isolation.md` · issues #62 #47 #79 #80
+
 ### 2026-06-11 — [CA7 testbed] career-automation #45 SHIPPED via pipeline (PR #64) · first green end-to-end run
 
 > Cross-session marker from the **CareerAutomation_7** testbed session (owner-trimmed; full handoff content folded in here, source file deleted). Platform-side detail (#19 acceptance, #47/#62 sequencing) lives in the `#45 LANDED` entry below.
