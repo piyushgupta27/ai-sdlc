@@ -44,6 +44,7 @@ import {
   type Task,
   type TesterOutput,
   type Tier,
+  type TrustState,
   asProjectSlug,
   err,
   isErr,
@@ -51,10 +52,11 @@ import {
   ok,
 } from '../types/index.js'
 import { writeAuditRow } from './audit-log.js'
-import { buildG2Request, enqueue } from './hitl-queue.js'
+import { buildG2Request, buildG4Request, enqueue } from './hitl-queue.js'
 import { shouldRefire, shouldRetry } from './retry-policy.js'
 import { projectDir } from './state.js'
 import { readState, updateState } from './state.js'
+import { requiresCommitHitl, trustGateReason } from './trust-gate.js'
 import { type ValidationCommands, hasDeterministicFailure, runValidations } from './validations.js'
 
 /**
@@ -92,6 +94,12 @@ export async function runTask(opts: {
   readonly targetRepo: string
   /** The branch BUILDER works on (orchestrator creates feature/<task-id>) */
   readonly branch: string
+  /**
+   * Enforce the trustState×tier HITL gate at COMMIT (#62). Defaults to `true`
+   * (fail-safe). The manual `--task-spec` path passes `false` — the human who
+   * launched it is already the gate and the run stops before merge.
+   */
+  readonly enforceTrustGate?: boolean
 }): Promise<Result<TaskRunOutcome, AppError>> {
   const start = performance.now()
   const auditRunIds: string[] = []
@@ -109,6 +117,8 @@ export async function runTask(opts: {
       }),
     )
   }
+  const trustState = stateCheck.value.trustState
+  const enforceTrustGate = opts.enforceTrustGate ?? true
 
   // Mark task as in-flight
   await updateState(opts.project, (s) => ({
@@ -276,6 +286,8 @@ export async function runTask(opts: {
         targetRepo: opts.targetRepo,
         branch: opts.branch,
         tier,
+        trustState,
+        enforceTrustGate,
         buildOutput,
         testOutput: testResult.value.output as TesterOutput,
         reviewOutput: reviewResult.value.output as ReviewerOutput,
@@ -319,6 +331,8 @@ interface CheckGateCtx {
   readonly targetRepo: string
   readonly branch: string
   readonly tier: Tier
+  readonly trustState: TrustState
+  readonly enforceTrustGate: boolean
   buildOutput: BuilderOutput
   testOutput: TesterOutput
   reviewOutput: ReviewerOutput
@@ -426,6 +440,12 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
     if (checkAuditId) ctx.auditRunIds.push(checkAuditId)
 
     if (decision.action === 'pass') {
+      // Quality gates passed. Trust gate (#62): per trustState × tier, a human
+      // may need to approve at COMMIT before we hand off for PR. Enforced on the
+      // autonomous path; the manual --task-spec path opts out (human in loop).
+      if (ctx.enforceTrustGate && requiresCommitHitl(ctx.trustState, ctx.tier)) {
+        return await escalateTrustGate(opts, ctx)
+      }
       return await finalizeSuccess(
         opts,
         ctx.buildOutput,
@@ -619,6 +639,52 @@ async function escalateCheckGate(
     costUsd: ctx.totalCost,
     durationMs: performance.now() - ctx.start,
     notes: `CHECKER gate escalated: ${reason}`,
+  })
+}
+
+/**
+ * Trust gate (#62): the work passed all quality gates, but trustState × tier
+ * requires a human to approve at COMMIT. Route through the same HITL queue as
+ * G2, return hitl-pending. Distinct from G2 (a quality-failure escalation) —
+ * this fires on clean work that the trust ladder won't auto-commit.
+ */
+async function escalateTrustGate(
+  opts: { project: ProjectSlug; task: Task; targetRepo: string },
+  ctx: CheckGateCtx,
+): Promise<Result<TaskRunOutcome, AppError>> {
+  const reason = trustGateReason(ctx.trustState, ctx.tier)
+  const request = buildG4Request({
+    project: opts.project,
+    taskId: opts.task.id,
+    epicId: opts.task.epicId,
+    tier: opts.task.tier,
+    summary: `${opts.task.title} — COMMIT gate (G4, trust approval)`,
+    reason: `${reason}\n\nWork passed BUILD/TEST/REVIEW/CHECK; awaiting human approval to COMMIT.`,
+    diffPath: `.audit/${todayUtc()}/diffs/${opts.task.id}.diff`,
+    reviewReportPath: `.audit/${todayUtc()}/review/${opts.task.id}.json`,
+    auditRunPath: `.audit/${todayUtc()}/runs`,
+    blockingTaskIds: opts.task.blocks,
+  })
+  const enqueueResult = await enqueue(opts.targetRepo, request)
+  if (!enqueueResult.ok) return enqueueResult
+
+  await updateState(opts.project, (s) => ({
+    ...s,
+    inFlightTaskIds: s.inFlightTaskIds.filter((id) => id !== opts.task.id),
+    hitlQueueDepth: s.hitlQueueDepth + 1,
+  }))
+
+  return ok({
+    taskId: opts.task.id,
+    result: 'hitl-pending',
+    // 'BLOCKED' for consistency with the other two hitl-pending paths
+    // (escalateCheckGate / escalateToG2); the gate identity lives on the G4 record.
+    stage: 'BLOCKED',
+    retriesUsed: ctx.retriesUsed,
+    auditRunIds: ctx.auditRunIds,
+    costUsd: ctx.totalCost,
+    durationMs: performance.now() - ctx.start,
+    notes: reason,
   })
 }
 
