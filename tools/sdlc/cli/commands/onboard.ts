@@ -5,7 +5,7 @@
  *   1. Verify repo exists at --repo
  *   2. Create projects/<slug>/config.json + state.json (initial state)
  *   3. Skeleton CLAUDE.md (Red zone = secrets + cookies only)
- *   4. Symlink local-vault/projects/active/<slug> → <repo> (if vault path exists)
+ *   4. Symlink the local vault's projects/active/<slug> → <repo> (if a vault exists)
  *   5. Write per-project config from defaults + CLI flags
  *
  * v1.5+ deliverables NOT in this onboard yet:

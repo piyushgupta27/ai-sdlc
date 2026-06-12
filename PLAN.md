@@ -126,7 +126,7 @@ These are the hard gates for declaring v1 complete.
 | Deliverable | Success criteria | HITL load |
 |---|---|---|
 | Onboard trip-research | Phase 0-1 from ONBOARDING.md complete; symlink + CLAUDE.md + Red zone + CI workflows in place | High (G1.5 ADR for Red zone) |
-| Execute trip-research MIGRATION.md | `~/Workspace/trip-research/` exists as standalone repo + symlink in local-vault; git-crypt key at `~/Workspace/.gitcrypt-key` | Tier 0 — explicit user "go" |
+| Execute trip-research MIGRATION.md | the trip-research repo exists as a standalone repo with its git-crypt key stored locally (never committed) | Tier 0 — explicit user "go" |
 | BUG-DETECTOR (4.4c) added | Operational in fleet; catches 1+ seeded bug in regression | Medium |
 | DESIGN-CONSISTENCY-REVIEWER (4.4d) added | Catches 1+ seeded token-violation in regression | Medium |
 | TESTER agent | Produces tests achieving ≥70% coverage on changed files | High |

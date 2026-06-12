@@ -12,7 +12,7 @@ This doc describes the canonical onboarding procedure. Variations per testbed ar
 
 Before a project can onboard:
 
-1. **Standalone repo.** Project lives at `~/Workspace/<slug>/` as its own git repo. (Not nested in local-vault.) Symlinked from `~/Workspace/local-vault/projects/active/<slug>/` for vault navigation.
+1. **Standalone repo.** Project lives at `~/Workspace/<slug>/` as its own git repo. (Optionally symlinked into a local vault for navigation.)
 2. **GitHub remote** (public or private — both work; ai-sdlc respects visibility for what it surfaces).
 3. **Owner identified.** For solo projects, that's you. For team projects, defined in `CODEOWNERS`.
 4. **Initial PLAN.md** exists in the project repo's root. The pipeline reads from PLAN.md to discover epics.
@@ -26,7 +26,7 @@ Onboarding is itself a multi-step process. It takes ~1-2 days of pipeline time p
 ### Phase 0 — Prerequisites verification (~1h)
 
 - Verify the repo exists at `~/Workspace/<slug>/`
-- Verify symlink at `~/Workspace/local-vault/projects/active/<slug>`
+- Verify the optional local-vault symlink, if used
 - Verify GitHub remote is reachable
 - Verify `gh` CLI has access (auth works)
 - Verify branch protection on `main` is enabled (or enable it)
