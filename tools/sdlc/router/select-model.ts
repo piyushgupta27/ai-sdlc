@@ -5,12 +5,25 @@
  * Mitigation for anti-monoculture (since same family): temperature + cold-read
  * hostile-eye prompt + smaller AGGREGATOR (deferred to v1.5+).
  *
+ * # Guardian-Opus invariant
+ *
+ * PLANNER, REVIEWER, and CHECKER are guardian roles: they ALWAYS run Opus,
+ * regardless of tier. They are never cost-routed down to Sonnet or Haiku on
+ * any tier. This is the quality floor of the pipeline — most critical on the
+ * auto-merge tiers (Tier 3-4) where no human reviews the change before it
+ * lands. Cheap guardians on cheap tiers would let weak reasoning ship code.
+ *
+ * Labor roles (BUILDER, TESTER) ARE tier-routed:
+ *   Tier 4 (non-retry, non-complex)   → Haiku   (cost-sensitive auto-merge)
+ *   Tier 2-3 (non-retry, non-complex) → Sonnet  (fast + capable default)
+ *   Tier 0-1, retry, or complex       → Opus    (high-blast-radius / hard work)
+ *
  * v1 routing:
- *   PLANNER   → opus 4.7 (heavy reasoning, low frequency)
- *   BUILDER   → sonnet 4.6 (fast, capable); opus 4.7 fallback on Tier 0/1 or retry
- *   TESTER    → sonnet 4.6
- *   REVIEWER  → opus 4.7 (hostile-eye prompt, temp 0.7)
- *   CHECKER   → opus 4.7 (independent semantic auditor, temp 0.4)
+ *   PLANNER   → opus 4.8 (GUARDIAN; always Opus, any tier)
+ *   BUILDER   → haiku 4.5 on tier-4 | sonnet 4.6 on tier-2/3 | opus 4.8 on tier-0/1, retry, or complex
+ *   TESTER    → haiku 4.5 on tier-4 | sonnet 4.6 on tier-2/3 | opus 4.8 on retry
+ *   REVIEWER  → opus 4.8 (GUARDIAN; hostile-eye prompt, temp 0.7)
+ *   CHECKER   → opus 4.8 (GUARDIAN; independent semantic auditor, temp 0.4)
  *   REPORTER  → haiku 4.5 (formulaic)
  */
 
@@ -41,7 +54,7 @@ export interface RouteRequest {
 }
 
 const SONNET: ModelId = 'claude-sonnet-4-6'
-const OPUS: ModelId = 'claude-opus-4-7'
+const OPUS: ModelId = 'claude-opus-4-8'
 const HAIKU: ModelId = 'claude-haiku-4-5-20251001'
 
 const SUBAGENT: ModelTransport = 'claude-code-subagent'
@@ -56,61 +69,102 @@ export function selectModel(req: RouteRequest): ModelRoute {
   const { role, tier, isRetry = false, isComplex = false } = req
 
   switch (role) {
+    /**
+     * GUARDIAN — always Opus, any tier. PLANNER reasoning floor is never
+     * cost-routed; weak planning on a cheap tier would propagate bad scope
+     * to every downstream agent.
+     */
     case 'planner':
       return {
         model: OPUS,
         transport: SUBAGENT,
         temperature: 0.3,
-        reason: 'PLANNER always uses Opus for heavy reasoning + low frequency',
+        reason: 'PLANNER → Opus (GUARDIAN; quality floor, any tier)',
       }
 
     case 'builder': {
-      // Opus on retry, Tier 0/1, or complex; Sonnet otherwise
+      // LABOR — tier-routed. Opus on Tier 0/1, retry, or complex; Haiku on
+      // Tier 4 default; Sonnet on Tier 2/3 default.
       const useOpus = isRetry || tier === 0 || tier === 1 || isComplex
+      if (useOpus) {
+        return {
+          model: OPUS,
+          transport: SUBAGENT,
+          temperature: 0.3,
+          reason: `BUILDER → Opus (tier=${tier}, retry=${isRetry}, complex=${isComplex})`,
+        }
+      }
+      if (tier === 4) {
+        return {
+          model: HAIKU,
+          transport: SUBAGENT,
+          temperature: 0.3,
+          reason: `BUILDER → Haiku (tier=${tier}; cost-sensitive auto-merge)`,
+        }
+      }
       return {
-        model: useOpus ? OPUS : SONNET,
+        model: SONNET,
         transport: SUBAGENT,
         temperature: 0.3,
-        reason: useOpus
-          ? `BUILDER → Opus (retry=${isRetry}, tier=${tier}, complex=${isComplex})`
-          : 'BUILDER → Sonnet (default; fast + capable)',
+        reason: `BUILDER → Sonnet (tier=${tier}; default fast + capable)`,
       }
     }
 
     case 'tester': {
-      // Sonnet usually; Opus only on second TESTER retry within same task
+      // LABOR — tier-routed. Opus on retry; Haiku on Tier 4 default; Sonnet
+      // on Tier 2/3 default. (Tier 0/1 falls through to Sonnet here — TESTER
+      // does not have a complexity-bump path; only retry escalates.)
+      if (isRetry) {
+        return {
+          model: OPUS,
+          transport: SUBAGENT,
+          temperature: 0.3,
+          reason: `TESTER → Opus (tier=${tier}; retry after coverage shortfall)`,
+        }
+      }
+      if (tier === 4) {
+        return {
+          model: HAIKU,
+          transport: SUBAGENT,
+          temperature: 0.3,
+          reason: `TESTER → Haiku (tier=${tier}; cost-sensitive auto-merge)`,
+        }
+      }
       return {
-        model: isRetry ? OPUS : SONNET,
+        model: SONNET,
         transport: SUBAGENT,
         temperature: 0.3,
-        reason: isRetry
-          ? 'TESTER → Opus (retry after coverage shortfall)'
-          : 'TESTER → Sonnet (default)',
+        reason: `TESTER → Sonnet (tier=${tier}; default)`,
       }
     }
 
+    /**
+     * GUARDIAN — always Opus, any tier. Cold-read hostile-eye reviewer needs
+     * the strongest model to be a real anti-monoculture check (Q-AI-2/Q-AI-18
+     * mitigation). Cost-routing the reviewer would defeat the purpose.
+     */
     case 'reviewer':
-      // Cold-read hostile-eye reviewer — different temp from BUILDER to
-      // encourage divergent thinking (Q-AI-18 mitigation for same-family review)
       return {
         model: OPUS,
         transport: SUBAGENT,
         temperature: 0.7,
-        reason:
-          'REVIEWER → Opus + cold-read prompt + temp 0.7 (Q-AI-2 amended: Claude-on-Claude with hostile-eye mitigation)',
+        reason: 'REVIEWER → Opus (GUARDIAN; cold-read prompt + temp 0.7; Q-AI-2 amended)',
       }
 
+    /**
+     * GUARDIAN — always Opus, any tier. Independent semantic auditor (Stage 1).
+     * Opus for judgment; temp 0.4 — lower than REVIEWER's 0.7 because the
+     * CHECKER wants consistent, sober gate decisions, not divergent idea
+     * generation. Deterministic facts are re-run by the orchestrator (H1);
+     * this routes only the LLM audit pass.
+     */
     case 'checker':
-      // Independent semantic auditor (Stage 1). Opus for judgment; temp 0.4 —
-      // lower than REVIEWER's 0.7 because the CHECKER wants consistent, sober
-      // gate decisions, not divergent idea generation. Deterministic facts are
-      // re-run by the orchestrator (H1); this routes only the LLM audit pass.
       return {
         model: OPUS,
         transport: SUBAGENT,
         temperature: 0.4,
         reason:
-          'CHECKER → Opus + temp 0.4 (independent semantic auditor; consistency over divergence)',
+          'CHECKER → Opus (GUARDIAN; independent semantic auditor; consistency over divergence)',
       }
 
     case 'reporter':
@@ -134,7 +188,7 @@ export function selectModel(req: RouteRequest): ModelRoute {
  * Used for cost estimation in the audit log. Update when Anthropic
  * pricing changes.
  *
- * Source: Anthropic pricing page (Sonnet 4.6, Opus 4.7, Haiku 4.5).
+ * Source: Anthropic pricing page (Sonnet 4.6, Opus 4.8, Haiku 4.5).
  */
 export const MODEL_COST_PER_M_TOKENS: Record<
   ModelId,
