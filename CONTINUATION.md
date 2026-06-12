@@ -28,6 +28,24 @@ tags: [continuation, post-compact, resume]
 
 > Most recent first. Each entry is self-contained — a cold reader after /compact can resume from any entry without needing earlier ones.
 
+### 2026-06-12 — MILESTONE: first autonomous self-hosted dispatch (ai-sdlc builds ai-sdlc → PR #99) + strategy pivot + board reprioritized
+
+**State:** `main` @ `b47e9cc`. #62 (trustState×tier COMMIT gate) merged (PR #84); branch protection ON `main` (required checks: ci + red-zone; enforce_admins false). Roadmap TRD merged (#85). Board (project #1 "ai-sdlc pipeline") reprioritized into Phase 0–4 with `phase:N` labels; **Ready/P0** = #86 #87 #78 #12 #88 #100.
+
+**Just completed:**
+- **🤖 First autonomous self-hosted run** — `sdlc dispatch --project ai-sdlc --task-spec` (caffeinated, supervised, 1 task). Full pipeline green (MERGED, 0 retries, **$3.11, 5.8min**); #19 WorktreeSandbox provisioned+torn-down live. Produced **PR #99** (README Autonomy-roadmap pointer). Doc: `docs/checkpoints/2026-06-12-first-autonomous-self-hosted-dispatch.md`.
+- **Live finding → #100 (Ready/P0):** the sandbox based off **stale local `main`** (pre-#85) → agent recreated the roadmap divergently → caught+dropped at supervise. Fix: dispatch must `git fetch` + base off **`origin/main`** (the #19 reviewer's original call). baseRef='main' (local) is the bug.
+- **Strategy pivot (two independent senior reviews):** north star = **merged-PRs/review-hour** (ITP→0 is a sub-metric); gate belongs at **MERGE** behind a **signed gate-evidence bundle** (#86); buy-don't-build commodity infra; observability = 4 planes (OTel→Grafana), not the audit chain; evals (#92) earn trust; cross-vendor gate reviewer (#93); self-host with core permanently red-zone.
+- **Budget model corrected:** plan is a **rate-limited subscription** (5h token quota + weekly), NOT a metered $ pool → 10–20 PRs/day feasible; brake is quota-window-aware (#87): 60–80% in active window (6PM–2AM IST), higher off-hours.
+- **Decisions banked:** guardian-Opus invariant (PLANNER/REVIEWER/CHECKER always Opus; tier-route labor) → #94. Model 4.7→4.8.
+- **13 new issues #86–#98 + #100** created; 8 reframed in-place (#21 #48 #70 #71 #80 #25 #83 #9).
+
+**Up next (RESUME HERE):** Ready/P0 floor — **#86** signed gate-evidence bundle (keystone for merge-gating) · **#100** baseRef fix (quick, unblocks clean autonomous runs) · **#87** quota brake · **#88** remote runner · **#78** dispatch correctness · **#12** secure trigger. THEN P1 #89 observability → P2 #21 auto-merge-tier-3 / #90 gate-relocation / #91 PLANNER-bulk.
+
+**Open follow-ups:** PRs awaiting Piyush's merge: **#99** (autonomous), this docs PR. Self-host core stays human-merge red-zone forever.
+
+**Reference docs:** `docs/plans/autonomy-roadmap.md` (TRD) · `docs/checkpoints/2026-06-12-first-autonomous-self-hosted-dispatch.md` · issues #86 #100 #85
+
 ### 2026-06-11 — #19 LANDED (PR #76 merged) · per-dispatch worktree isolation behind a Sandbox interface · NEXT = #62 → #47
 
 **State:** `main` @ `574b8ca`. #19 (worktree isolation) merged via PR #76; gh19 worktree removed. New `tools/sdlc/sandbox/` module (`Sandbox` interface + `WorktreeSandbox`); `dispatch.ts` provisions a worktree per task → passes `workspacePath` as `targetRepo` → `cleanup()` in finally; `resetToMain` removed. Orchestrator + router untouched → **zero red-zone**. TRD at `docs/design/sandbox-isolation.md` (first artifact in the team TRD template).
