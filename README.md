@@ -31,6 +31,14 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 
 ---
 
+## Autonomy roadmap
+
+North star metric: **merged-PRs per review-hour — ITP (interrupts-to-PR) → 0** for the ticket→PR span.
+
+Full phased plan with trust-expansion criteria and milestone targets: [docs/plans/autonomy-roadmap.md](./docs/plans/autonomy-roadmap.md).
+
+---
+
 ## Why
 
 Modern engineering teams ship code roughly the same way they did in 2010: developer reads spec, writes code, asks colleague for review, runs CI, merges. Agentic AI changes the unit economics. A single engineer with the right pipeline can ship at team velocity. But "agent writes code, autonomously merges" is a recipe for incidents — what's missing is the same operational rigor we apply to human teams: pre-mortem reviews, blast-radius classification, audit trails, rollback paths, calibrated approvals.
