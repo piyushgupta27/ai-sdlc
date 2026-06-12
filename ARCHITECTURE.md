@@ -35,7 +35,7 @@ ai-sdlc inherits patterns from two production references:
   - Repo Readiness Score (80%+ threshold for autonomy)
   - AI filter layer (drops false positives before human review)
   - Production scale: 1,000 PRs/week, ~33% auto-merge with zero human comments
-- **slice Jira-to-PR Creator execution plan v2** — Piyush's authored canonical pattern doc at `~/Workspace/ai-workspace/projects/active/slice-ai-strategy/docs/jira-to-pr-creator-execution-plan-v2.md`
+- **a prior internal Jira-to-PR pattern doc (private)** — the maintainer's authored canonical pattern doc (private)
   - Blast-radius zones (Green/Yellow/Red)
   - Three-layer enforcement (CLAUDE.md + pre-write hook + CI)
   - Trust expansion criteria (20+ tickets, 0 incidents, ≥85% coverage, owner sign-off)
@@ -409,7 +409,7 @@ Per-stage detail tables (inputs, outputs, validations, failure handling) are in 
 
 ## 6. Tier system + zone mapping
 
-Already defined in [HITL.md](./HITL.md) §"Tier ↔ gate matrix" and per-project CLAUDE.md. Shared vocab with slice plan:
+Already defined in [HITL.md](./HITL.md) §"Tier ↔ gate matrix" and per-project CLAUDE.md. Shared vocab with the prior pattern doc:
 
 | Tier | Slice zone | Color | Examples (target project's files) | Three-layer enforcement |
 |---|---|---|---|---|
@@ -427,7 +427,7 @@ Why two tiers map to Red: slice's Red zone collapses what we split into Tier 0 (
 
 The 6 non-negotiables (R-GRD-1..6) instantiated. R-GRD-1 is the most architecturally interesting.
 
-### G1. Tier 0 — extreme caution (three-layer enforcement, slice plan §7.1)
+### G1. Tier 0 — extreme caution (three-layer enforcement, the prior pattern doc §7.1)
 
 Tier 0 and Tier 1 files = Red zone. Require **all three layers to fail simultaneously for a breach**. Each layer is independent.
 
@@ -610,7 +610,7 @@ Per-project + cross-project views:
 
 ## 9. Context layer
 
-> **Parent reference:** slice plan v2 Appendix A "CLAUDE.md template" is the structural source. Fields adapted per project stack.
+> **Parent reference:** the prior pattern doc Appendix A "CLAUDE.md template" is the structural source. Fields adapted per project stack.
 
 The thing that makes future-agent runs not lose context.
 
@@ -635,7 +635,7 @@ CONTEXT.md                                    # repo-level — project context
 
 CLAUDE.md (repo-root) is global behavior + Red zone. CONTEXT.md per module is what the slice template gives us.
 
-### 9.2 CONTEXT.md template (adapted from slice plan Appendix A)
+### 9.2 CONTEXT.md template (adapted from the prior pattern doc Appendix A)
 
 ```markdown
 ---
@@ -714,7 +714,7 @@ updated_by: <agent or user>
 - No → skip
 - Weekly: SCOUT runs drift check, diffs CONTEXT.md vs code, flags inconsistencies
 
-### 9.4 Bubble-up rule (slice plan §A.3)
+### 9.4 Bubble-up rule (the prior pattern doc §A.3)
 
 When a leaf CONTEXT.md changes substantially:
 - Public API addition/removal
@@ -751,7 +751,7 @@ Cache key = sha256(file paths + last-commit SHAs of those paths). Invalidates au
 | HITL queue grows unbounded | Queue >20 pending for a project | Pipeline stops accepting new tasks for that project; reminds user; resumes when queue ≤5 |
 | Reviewer false-positive rate >40% | AI filter layer reports it | Auto-rollback prompts to last-known-good versions; cohort flagged for prompt review |
 
-### 10.2 Trust contraction protocol (slice plan §7.2 — autonomy reduces on incidents)
+### 10.2 Trust contraction protocol (the prior pattern doc §7.2 — autonomy reduces on incidents)
 
 Expansion criteria are in §11. **Contraction** is symmetric. Both directions explicit, automatic, reversible.
 
@@ -774,9 +774,9 @@ Expansion criteria are in §11. **Contraction** is symmetric. Both directions ex
 
 ## 11. Trust expansion model
 
-> **Parent reference:** slice plan v2 §7.2.
+> **Parent reference:** the prior pattern doc §7.2.
 
-### 11.1 Formal expansion criteria (slice plan §7.2, all required)
+### 11.1 Formal expansion criteria (the prior pattern doc §7.2, all required)
 
 Zone reclassification upward only when **all** demonstrably true:
 
@@ -854,7 +854,7 @@ Each transition logged at `.audit/trust-transitions.jsonl`. Contractions move st
 | Cost tracking | Logged per call; aggregated in dashboard | No external service |
 | Domain (portfolio) | Cloudflare DNS, .dev TLD | Engineer signal, free DNS |
 
-### 12.2 Smart model routing (slice plan §5.4)
+### 12.2 Smart model routing (the prior pattern doc §5.4)
 
 Per Q-AI-2 amendment: Claude-only family for v1. Mitigations via temperature + cold-read prompt + AGGREGATOR scale-independence.
 
@@ -876,7 +876,7 @@ Per Q-AI-2 amendment: Claude-only family for v1. Mitigations via temperature + c
 
 Routing decision made by `tools/sdlc/router/select-model.ts` — deterministic; logs every choice + reason.
 
-### 12.3 Prompt caching policy (slice plan §10.2 — ~22% cost reduction)
+### 12.3 Prompt caching policy (the prior pattern doc §10.2 — ~22% cost reduction)
 
 **Always cache:** repo-root CLAUDE.md, repo-root CONTEXT.md, entire `tasks/lessons.md`, architecture diagrams from `docs/adr/`
 

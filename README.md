@@ -47,7 +47,7 @@ ai-sdlc is the rigor layer. It assumes agents will write most code. It does not 
 
 Reference influences:
 - **Razorpay Slash** (production autonomous SDLC at enterprise scale) — specialized reviewer fleet, Repo Readiness scoring, AI filter layer
-- **slice's Jira-to-PR Creator execution plan v2** (Piyush's own canonical EM-level pattern doc for slice's Merchants pod) — blast-radius zones, three-layer enforcement, trust expansion criteria
+- **a prior internal Jira-to-PR pattern doc (private)** (the maintainer's own canonical pattern doc (private)) — blast-radius zones, three-layer enforcement, trust expansion criteria
 
 ---
 

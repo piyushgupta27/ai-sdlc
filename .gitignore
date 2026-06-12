@@ -50,3 +50,6 @@ test-results/
 # Local state
 .last-pull
 .feature-prompted-*
+
+# Local working log — lives in the private vault, never in this public repo (#108)
+CONTINUATION.md

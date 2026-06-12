@@ -13,7 +13,7 @@ This file is **append-mostly**. Old requirements stay (auditable history); statu
 | **R-AISDLC-1..9** | Pipeline workflow contract |
 | **R-AISDLC-10..19** | Autonomy goals |
 | **R-AISDLC-20..29** | Pipeline design directives (auditability, context, validation, HITL, harness) |
-| **R-AISDLC-30..49** | Patterns adopted from slice + Razorpay |
+| **R-AISDLC-30..49** | Patterns adopted from prior internal work + Razorpay |
 | **R-AISDLC-50..69** | Multi-tenancy + onboarding |
 | **R-AISDLC-70..89** | Test-debt + readiness |
 | **R-AISDLC-90..99** | HITL gate spec |
@@ -63,7 +63,7 @@ The full architectural target stays the north star. Each v1.5+ item activates on
 1. [Pipeline workflow](#1-pipeline-workflow-contract)
 2. [Autonomy goals](#2-autonomy-goals)
 3. [Pipeline design directives](#3-pipeline-design-directives-r-aisdlc-20s)
-4. [Patterns adopted from slice + Razorpay](#4-patterns-adopted-from-slice--razorpay-r-aisdlc-30s)
+4. [Patterns adopted from prior internal work + Razorpay](#4-patterns-adopted-from-prior-internal-work--razorpay-r-aisdlc-30s)
 5. [Multi-tenancy + onboarding](#5-multi-tenancy--onboarding-r-aisdlc-50s)
 6. [Test-debt + readiness](#6-test-debt--readiness-r-aisdlc-70s)
 7. [HITL gate spec](#7-hitl-gate-spec-r-aisdlc-90s)
@@ -100,7 +100,7 @@ The pipeline must implement this canonical workflow:
 | **R-AISDLC-10** | Goal: zero user intervention between epic approval and merge for routine work | User stated |
 | **R-AISDLC-11** | Increase user's parallelism across multiple products | User stated |
 | **R-AISDLC-12** | End state: ecosystem of self-hosted products built by the same pipeline (Phase E) | User stated |
-| **R-AISDLC-13** | Research how others have done this; cite parent implementations | User stated (Razorpay + slice plan v2) |
+| **R-AISDLC-13** | Research how others have done this; cite parent implementations | User stated (Razorpay + the prior pattern doc) |
 
 ---
 
@@ -118,22 +118,22 @@ The 5 "things to take care of":
 
 ---
 
-## 4. Patterns adopted from slice + Razorpay (R-AISDLC-30s)
+## 4. Patterns adopted from prior internal work + Razorpay (R-AISDLC-30s)
 
-Following the post-correction 2026-05-20 alignment with Razorpay Slash + Piyush's own slice Jira-to-PR Creator execution plan v2:
+Following the post-correction 2026-05-20 alignment with Razorpay Slash + the maintainer's own prior internal Jira-to-PR pattern doc (private):
 
 | ID | Requirement | Source |
 |---|---|---|
-| **R-AISDLC-30** | **CLAUDE.md per module** — slice plan Appendix A template (Service Overview / Blast Radius / Red Zone Files / Architecture / Code Conventions / Error Handling / Logging / Money & Amounts / Database / API Contracts / Testing / Local Dev / Dependencies / Known Quirks). Adapted to per-project stack. | slice plan App. A; Q-AI-9 DECIDED 2026-05-21 |
+| **R-AISDLC-30** | **CLAUDE.md per module** — the prior pattern doc Appendix A template (Service Overview / Blast Radius / Red Zone Files / Architecture / Code Conventions / Error Handling / Logging / Money & Amounts / Database / API Contracts / Testing / Local Dev / Dependencies / Known Quirks). Adapted to per-project stack. | the prior pattern doc App. A; Q-AI-9 DECIDED 2026-05-21 |
 | **R-AISDLC-31** | **Specialized reviewer fleet** — REVIEWER is multiple narrow sub-agents in parallel (Phase A: SECURITY + CODE-QUALITY; Phase B: + BUG-DETECTOR + DESIGN; v1.5: + PERF + I18N). AGGREGATOR merges verdicts. | Razorpay Slash blog; Q-AI-11 DECIDED 2026-05-21 |
-| **R-AISDLC-32** | **Three-layer enforcement for Tier 0/1 (Red zone)** — (1) CLAUDE.md declares Red zone files/dirs; (2) pre-write hook `check-blast-radius.sh` blocks unapproved writes; (3) CI workflow rejects PRs touching Red zone without HITL label. All three independent. | slice plan §7.1 |
+| **R-AISDLC-32** | **Three-layer enforcement for Tier 0/1 (Red zone)** — (1) CLAUDE.md declares Red zone files/dirs; (2) pre-write hook `check-blast-radius.sh` blocks unapproved writes; (3) CI workflow rejects PRs touching Red zone without HITL label. All three independent. | the prior pattern doc §7.1 |
 | **R-AISDLC-33** | **Repo Readiness Score gate** — orchestrator refuses auto-merge until repo scores ≥70% across Context + Testing + CI/CD pillars in Phase A. Threshold rises to 80% at Phase B. Per project. | Razorpay Slash blog; Q-AI-10 DECIDED 2026-05-21 |
 | **R-AISDLC-34** | **AI filter layer** — Haiku-class call between reviewer fleet output and HITL queue drops likely false positives (real=false AND confidence>0.7). Drop rate tracked per cohort; >40% triggers prompt review. | Razorpay Slash blog |
-| **R-AISDLC-35** | **Prompt caching of CONTEXT tree** — repo-root CLAUDE.md + CONTEXT.md tree + lessons.md cached per agent run at Anthropic's 0.1× rate. Expected savings ~22% per ticket. Cache key = sha256(paths + commit SHAs). | slice plan §10.2 |
-| **R-AISDLC-36** | **Smart model routing** — see §11 model router table. Sonnet default for BUILDER/TESTER; Opus fallback on validation failure or Tier 0/1; Haiku for AGGREGATOR/COMMIT/REPORTER/SCOUT. All via Claude Code Subagent transport (Q-AI-2 amendment, see below). | slice plan §5.4 |
-| **R-AISDLC-37** | **Ticket / epic readiness check** — PLANNER refuses to break down an epic unless DoD + AC + tier + estimated cost are present. Gate before agent run. | slice plan §5.2 |
-| **R-AISDLC-38** | **Trust expansion formal criteria** — zone reclassification (upward) requires: 20+ tickets processed, 0 production incidents in trust window, ≥85% test coverage in zone, owner explicit approval, reversible recording. Red zone NEVER reclassifies downward. | slice plan §7.2 |
-| **R-AISDLC-39** | **Parent reference: slice's Jira-to-PR Creator execution plan v2** at `~/Workspace/ai-workspace/projects/active/slice-ai-strategy/docs/jira-to-pr-creator-execution-plan-v2.md`. ai-sdlc is the personal-projects sibling. Pattern changes here propagate from there. | Piyush correction 2026-05-20 |
+| **R-AISDLC-35** | **Prompt caching of CONTEXT tree** — repo-root CLAUDE.md + CONTEXT.md tree + lessons.md cached per agent run at Anthropic's 0.1× rate. Expected savings ~22% per ticket. Cache key = sha256(paths + commit SHAs). | the prior pattern doc §10.2 |
+| **R-AISDLC-36** | **Smart model routing** — see §11 model router table. Sonnet default for BUILDER/TESTER; Opus fallback on validation failure or Tier 0/1; Haiku for AGGREGATOR/COMMIT/REPORTER/SCOUT. All via Claude Code Subagent transport (Q-AI-2 amendment, see below). | the prior pattern doc §5.4 |
+| **R-AISDLC-37** | **Ticket / epic readiness check** — PLANNER refuses to break down an epic unless DoD + AC + tier + estimated cost are present. Gate before agent run. | the prior pattern doc §5.2 |
+| **R-AISDLC-38** | **Trust expansion formal criteria** — zone reclassification (upward) requires: 20+ tickets processed, 0 production incidents in trust window, ≥85% test coverage in zone, owner explicit approval, reversible recording. Red zone NEVER reclassifies downward. | the prior pattern doc §7.2 |
+| **R-AISDLC-39** | **Parent reference: a prior internal Jira-to-PR pattern doc (private)** at (a private local doc). ai-sdlc is the public sibling of that private work. | Piyush correction 2026-05-20 |
 | **R-AISDLC-40** | **Industry exemplar: Razorpay Slash** at https://razorpay.com/blog/razorpay-engineers-built-slash-slash-builds-the-rest/ — production reference for fleet pattern, readiness scoring, filter layer, three-door entry points. | Piyush correction 2026-05-20 |
 
 ---
@@ -143,7 +143,7 @@ Following the post-correction 2026-05-20 alignment with Razorpay Slash + Piyush'
 | ID | Requirement | Source |
 |---|---|---|
 | **R-AISDLC-50** | Pipeline is **multi-tenant from day 1**. One ai-sdlc instance manages N consumer projects (testbeds). | 2026-05-22 pivot |
-| **R-AISDLC-51** | **Standalone repos for testbeds.** Every shippable project lives at `~/Workspace/<slug>/` as its own git repo, symlinked into ai-workspace. No incubation in ai-workspace for projects that will be onboarded. | 2026-05-22 pivot |
+| **R-AISDLC-51** | **Standalone repos for testbeds.** Every shippable project lives at `~/Workspace/<slug>/` as its own git repo, optionally symlinked into a local vault. No incubation in the vault for projects that will be onboarded. | 2026-05-22 pivot |
 | **R-AISDLC-52** | **Onboarding flow is a Phase A deliverable**, not Phase E. `pnpm sdlc onboard --repo <path> --slug <slug>` is the canonical command. | 2026-05-22 pivot |
 | **R-AISDLC-53** | Per-project state lives at `ai-sdlc/projects/<slug>/{config.json, state.json, prompts/}`. Secrets never live here. | Same |
 | **R-AISDLC-54** | Audit log is project-scoped: `.audit/<date>/runs/*.jsonl` in the TARGET repo, not in ai-sdlc itself. | Same |
@@ -219,8 +219,8 @@ User explicitly enumerated six. Violation = pipeline halt + RCA.
 
 | ID | Requirement | Source |
 |---|---|---|
-| **R-OPS-1** | Standalone repos for shippable projects, symlinked into ai-workspace. | 2026-05-22 |
-| **R-OPS-2** | git-crypt for secrets in testbed repos; key at `~/Workspace/.<slug>-gitcrypt-key`. | career-automation pattern |
+| **R-OPS-1** | Standalone repos for shippable projects, optionally symlinked into a local vault. | 2026-05-22 |
+| **R-OPS-2** | git-crypt for secrets in testbed repos; key stored locally (never committed). | career-automation pattern |
 | **R-OPS-3** | Branch protection on `main` for all repos: required CI checks, no direct push, linear history. | Phase A deliverable |
 | **R-OPS-4** | CODEOWNERS file in every repo: Red zone → @owner. | Phase A deliverable |
 | **R-OPS-5** | Conventional Commits style for all commits. Agent commits get `Generated-By:` trailer. | Phase A |
@@ -240,7 +240,7 @@ Deferred to v1.5+ or later. Not in scope for v1.
 | **R-FUT-5** | SaaS hosting of ai-sdlc | AGPL allows self-hosting; no managed offering planned |
 | **R-FUT-6** | Substack newsletter integration | Skipped per 2026-05-22 decision |
 | **R-FUT-7** | Codex CLI / OpenAI API integration for reviewer fleet | Q-AI-2 amended to Claude-on-Claude for v1; revisit at v1.5 |
-| **R-FUT-8** | Capability registry (slice plan §11.3) | Phase E + |
+| **R-FUT-8** | Capability registry (the prior pattern doc §11.3) | Phase E + |
 | **R-FUT-9** | "Post-worthy moment" detector for portfolio content drafts | REPORTER enhancement, Phase B+ |
 | **R-FUT-10** | Linear/Jira/Notion integration | GitHub Issues + Projects is enough |
 
@@ -283,7 +283,7 @@ Decisions made + locked. Future changes require Q-AI-N+1 amendments, NOT edits t
 | **Q-AI-17** | Domain | piyushgupta.io (user-owned; short, memorable, tech-industry-recognized TLD; DNS via Cloudflare) |
 | **Q-AI-18** | Reviewer fleet anti-monoculture mitigation (since same family) | Different temperature (0.3 builder, 0.7 reviewer) + cold-read hostile-eye reviewer prompt + smaller AGGREGATOR (Haiku) for scale-based independence |
 | **Q-AI-19** | Trust expansion data source | Real-use feedback via G5 (post-merge) + audit log defect rate + cohort tracking |
-| **Q-AI-20** | Cookie storage | git-crypt-encrypted JSON in `private/` per target repo; key at `~/Workspace/.<slug>-gitcrypt-key` |
+| **Q-AI-20** | Cookie storage | git-crypt-encrypted JSON in `private/` per target repo; key stored locally (never committed) |
 
 ### Eric Tech Superboard adoptions (2026-05-23)
 
