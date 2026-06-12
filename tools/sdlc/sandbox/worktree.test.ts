@@ -41,6 +41,34 @@ function setupRepo(): string {
   return repo
 }
 
+/**
+ * Build a repo whose local `main` is STALE behind `origin/main` (#100): a second
+ * commit (adds NEW.md) is pushed to the bare remote, then local `main` is reset
+ * back one. So origin/main has NEW.md; local main does not.
+ */
+function setupStaleRepo(branch = 'main'): string {
+  const root = mkdtempSync(join(tmpdir(), 'sdlc-sbx-'))
+  tempRoots.push(root)
+  const remote = join(root, 'remote.git')
+  const repo = join(root, 'local')
+  execFileSync('git', ['init', '--bare', '-q', '-b', branch, remote], { stdio: 'pipe' })
+  execFileSync('git', ['clone', '-q', remote, repo], { stdio: 'pipe' })
+  const git = (args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' })
+  git(['config', 'user.email', 't@t.t'])
+  git(['config', 'user.name', 'Tester'])
+  git(['checkout', '-q', '-B', branch])
+  writeFileSync(join(repo, 'README.md'), 'v1\n')
+  git(['add', '-A'])
+  git(['commit', '-qm', 'v1'])
+  git(['push', '-q', '-u', 'origin', branch])
+  writeFileSync(join(repo, 'NEW.md'), 'v2\n') // the "merged-on-remote" change
+  git(['add', '-A'])
+  git(['commit', '-qm', 'v2'])
+  git(['push', '-q', 'origin', branch])
+  git(['reset', '--hard', '-q', 'HEAD~1']) // local <branch> now stale (v1, no NEW.md)
+  return repo
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -242,6 +270,38 @@ describe('provisionWorktreeSandbox', () => {
     if (!r.ok) return
     // The worktree must reflect the baseRef, not the source checkout's HEAD.
     expect(existsSync(join(r.value.workspacePath, 'INTEGRATION.md'))).toBe(true)
+    await r.value.cleanup()
+  })
+
+  it('bases off origin/<branch>, not a STALE local branch (#100)', async () => {
+    const repo = setupStaleRepo()
+    // baseRef 'main' must resolve to origin/main (v2, has NEW.md), NOT the stale
+    // local main (v1, no NEW.md). This is the first-autonomous-run bug.
+    const r = await provisionWorktreeSandbox({
+      repoPath: repo,
+      taskId: 'gh-100',
+      branch: 'feature/gh-100',
+      baseRef: 'main',
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(existsSync(join(r.value.workspacePath, 'NEW.md'))).toBe(true)
+    await r.value.cleanup()
+  })
+
+  it('a hex-like branch name still resolves to its origin tip, not stale local (#100 P2)', async () => {
+    // 'deadbeef' looks like a short SHA but is a real branch — must NOT be skipped
+    // (the old /^[0-9a-f]{7,40}$/ guess would silently base off the stale local).
+    const repo = setupStaleRepo('deadbeef')
+    const r = await provisionWorktreeSandbox({
+      repoPath: repo,
+      taskId: 'gh-100-hex',
+      branch: 'feature/gh-100-hex',
+      baseRef: 'deadbeef',
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(existsSync(join(r.value.workspacePath, 'NEW.md'))).toBe(true)
     await r.value.cleanup()
   })
 })

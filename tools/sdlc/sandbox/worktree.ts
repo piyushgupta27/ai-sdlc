@@ -29,18 +29,28 @@ interface GitResult {
   readonly stderr: string
 }
 
-/** Run a git command. Never rejects — non-zero exit is reported via `code`. */
-function runGit(args: readonly string[], cwd?: string): Promise<GitResult> {
+/**
+ * Run a git command. Never rejects — non-zero exit is reported via `code`.
+ * `timeoutMs` bounds the call (e.g. a `git fetch` against an unreachable remote);
+ * on timeout execFile kills the child and we report a non-zero code so callers
+ * fall back rather than hang.
+ */
+function runGit(args: readonly string[], cwd?: string, timeoutMs?: number): Promise<GitResult> {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
-      const code =
-        error && typeof (error as { code?: unknown }).code === 'number'
-          ? (error as { code: number }).code
-          : error
-            ? 1
-            : 0
-      resolve({ code, stdout: stdout.toString(), stderr: stderr.toString() })
-    })
+    execFile(
+      'git',
+      args,
+      { cwd, maxBuffer: 16 * 1024 * 1024, ...(timeoutMs ? { timeout: timeoutMs } : {}) },
+      (error, stdout, stderr) => {
+        const code =
+          error && typeof (error as { code?: unknown }).code === 'number'
+            ? (error as { code: number }).code
+            : error
+              ? 1
+              : 0
+        resolve({ code, stdout: stdout.toString(), stderr: stderr.toString() })
+      },
+    )
   })
 }
 
@@ -171,6 +181,59 @@ function teardownSync(repoPath: string, workspacePath: string, seededKey: string
   execFileSync('git', ['-C', repoPath, 'worktree', 'prune'], { stdio: 'ignore' })
 }
 
+/** Hard ceiling on the base-ref fetch so an unreachable remote can't hang a dispatch. */
+const FETCH_TIMEOUT_MS = 20_000
+
+/**
+ * Resolve the base ref to the freshest MERGED tip (#100). For a plain branch
+ * name (e.g. `main`), fetch it from origin and prefer `origin/<branch>` — so a
+ * dispatch is never based off a **stale local branch** (the bug: a local `main`
+ * left behind origin after a PR merged on the remote → the agent missed merged
+ * work and rebuilt it divergently). Falls back to the given ref when there is no
+ * remote / it can't be fetched. Skips `HEAD`, already-`origin/` refs, and a
+ * FULL 40-char SHA (an unambiguous commit). Short hex strings are treated as
+ * branch names — a hex-like branch (`deadbeef`) must still resolve to its origin
+ * tip, not silently fall back to a stale local (caught in review).
+ */
+async function resolveBaseRef(
+  repoPath: string,
+  baseRef: string,
+): Promise<{ readonly ref: string; readonly note?: string }> {
+  if (baseRef === 'HEAD' || baseRef.startsWith('origin/') || /^[0-9a-f]{40}$/.test(baseRef)) {
+    return { ref: baseRef }
+  }
+  // No remote at all → local-only workflow; expected, stay quiet.
+  const remotes = await runGit(['-C', repoPath, 'remote'])
+  if (!remotes.stdout.split(/\s+/).filter(Boolean).includes('origin')) {
+    return { ref: baseRef }
+  }
+  // Bounded fetch: connect-timeout at the git layer + a hard execFile ceiling,
+  // so an unreachable remote (TCP blackhole) falls back instead of hanging.
+  const fetched = await runGit(
+    ['-C', repoPath, '-c', 'http.connectTimeout=10', 'fetch', 'origin', baseRef],
+    undefined,
+    FETCH_TIMEOUT_MS,
+  )
+  if (fetched.code === 0) {
+    const remote = await runGit([
+      '-C',
+      repoPath,
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `origin/${baseRef}`,
+    ])
+    if (remote.code === 0) return { ref: `origin/${baseRef}` }
+    // Fetch ok but no such branch on origin (local-only branch / short SHA) → use as-is, quiet.
+    return { ref: baseRef }
+  }
+  // origin exists but the fetch failed (network / unreachable / timeout) → warn: the local ref may be stale.
+  return {
+    ref: baseRef,
+    note: `Could not fetch origin/${baseRef} (network/timeout) — based off local ${baseRef}, which may be stale.`,
+  }
+}
+
 /**
  * Provision an isolated git worktree for one dispatch.
  *
@@ -179,7 +242,7 @@ function teardownSync(repoPath: string, workspacePath: string, seededKey: string
  */
 export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Result<Sandbox>> {
   const { repoPath, taskId, branch } = req
-  const baseRef = req.baseRef ?? 'HEAD'
+  const requestedBaseRef = req.baseRef ?? 'HEAD'
 
   if (!existsSync(repoPath)) {
     return err(
@@ -190,6 +253,12 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
   }
 
   const workspacePath = join(repoPath, SANDBOX_DIRNAME, sanitizeTaskId(taskId))
+
+  // Base off the freshest MERGED tip (#100): fetch + prefer origin/<branch>, so
+  // a stale local branch can't seed a divergent base. Done outside the lock —
+  // a fetch updates remote-tracking refs and doesn't contend on worktree admin.
+  const base = await resolveBaseRef(repoPath, requestedBaseRef)
+  if (base.note) process.stderr.write(`  ⚠️  ${base.note}\n`)
 
   // Preclean + the worktree add mutate the repo's worktree admin — serialize
   // them so concurrent provisions don't contend on the repo lock. --no-checkout
@@ -208,7 +277,7 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
       '-b',
       branch,
       workspacePath,
-      baseRef,
+      base.ref,
     ])
   })
   if (add.code !== 0) {
