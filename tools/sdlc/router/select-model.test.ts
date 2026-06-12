@@ -92,19 +92,70 @@ describe('estimateCost', () => {
     expect(estimateCost(sonnet, { input: 1_000_000, output: 0 })).toBeCloseTo(pricing.input, 5)
   })
 
-  it('charges cache rate for cached portion of input', () => {
+  it('prices input at input rate and cacheRead at cache rate independently', () => {
     const sonnet = 'claude-sonnet-4-6'
-    const cost = estimateCost(sonnet, {
-      input: 1_000_000,
-      output: 0,
-      cacheRead: 1_000_000, // 100% cache hit
-    })
     const pricing = MODEL_COST_PER_M_TOKENS[sonnet] as {
       input: number
       output: number
       cache: number
     }
-    expect(cost).toBeCloseTo(pricing.cache, 5)
+    const cost = estimateCost(sonnet, {
+      input: 1_000_000,
+      output: 0,
+      cacheRead: 1_000_000,
+    })
+    // Both input and cacheRead are priced independently — no subtraction
+    expect(cost).toBeCloseTo(pricing.input + pricing.cache, 5)
+  })
+
+  it('cacheRead > input: prices both independently without subtraction', () => {
+    const sonnet = 'claude-sonnet-4-6'
+    const pricing = MODEL_COST_PER_M_TOKENS[sonnet] as {
+      input: number
+      output: number
+      cache: number
+    }
+    const input = 100_000
+    const cacheRead = 900_000
+    const output = 50_000
+    const cost = estimateCost(sonnet, { input, output, cacheRead })
+    const expected =
+      (input * pricing.input) / 1_000_000 +
+      (cacheRead * pricing.cache) / 1_000_000 +
+      (output * pricing.output) / 1_000_000
+    expect(cost).toBeCloseTo(expected, 10)
+  })
+
+  it('input > cacheRead: prices both independently without subtraction', () => {
+    const sonnet = 'claude-sonnet-4-6'
+    const pricing = MODEL_COST_PER_M_TOKENS[sonnet] as {
+      input: number
+      output: number
+      cache: number
+    }
+    const input = 800_000
+    const cacheRead = 200_000
+    const output = 100_000
+    const cost = estimateCost(sonnet, { input, output, cacheRead })
+    const expected =
+      (input * pricing.input) / 1_000_000 +
+      (cacheRead * pricing.cache) / 1_000_000 +
+      (output * pricing.output) / 1_000_000
+    expect(cost).toBeCloseTo(expected, 10)
+  })
+
+  it('no cacheRead: defaults to 0, costs input + output only', () => {
+    const sonnet = 'claude-sonnet-4-6'
+    const pricing = MODEL_COST_PER_M_TOKENS[sonnet] as {
+      input: number
+      output: number
+      cache: number
+    }
+    const input = 500_000
+    const output = 200_000
+    const cost = estimateCost(sonnet, { input, output })
+    const expected = (input * pricing.input) / 1_000_000 + (output * pricing.output) / 1_000_000
+    expect(cost).toBeCloseTo(expected, 10)
   })
 
   it('Opus is more expensive than Sonnet for same tokens', () => {

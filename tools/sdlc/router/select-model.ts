@@ -147,6 +147,11 @@ export const MODEL_COST_PER_M_TOKENS: Record<
 
 /**
  * Estimate cost of a run from token counts.
+ *
+ * `input` is the **uncached** input token count, as reported by the Claude
+ * CLI's `input_tokens` field (already excludes cache-read tokens).
+ * `cacheRead` is the cache-read token count, priced separately at the lower
+ * cache rate. Pass both directly — do NOT subtract cacheRead from input.
  */
 export function estimateCost(
   model: ModelId,
@@ -154,11 +159,10 @@ export function estimateCost(
 ): number {
   const pricing = MODEL_COST_PER_M_TOKENS[model]
   if (!pricing) return 0
-  const cachedPortion = tokens.cacheRead ?? 0
-  const uncachedInput = Math.max(0, tokens.input - cachedPortion)
+  const cacheRead = tokens.cacheRead ?? 0
   return (
-    (uncachedInput * pricing.input) / 1_000_000 +
-    (cachedPortion * pricing.cache) / 1_000_000 +
+    (tokens.input * pricing.input) / 1_000_000 +
+    (cacheRead * pricing.cache) / 1_000_000 +
     (tokens.output * pricing.output) / 1_000_000
   )
 }
