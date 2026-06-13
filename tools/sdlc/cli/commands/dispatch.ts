@@ -27,6 +27,13 @@ import {
 import { parseDispatchTrigger, requireWebhookToken, subscribe } from '../../integrations/ntfy.js'
 import { type BudgetDecision, PAUSE_THRESHOLD, budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
+import {
+  type PacingDecision,
+  type RevertDecision,
+  WINDOW_HOURS,
+  pacingGate,
+  reworkRateGate,
+} from '../../orchestrator/pacing.js'
 import { projectDir, readState } from '../../orchestrator/state.js'
 import { provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { type ProjectSlug, type Task, type Tier, asProjectSlug } from '../../types/index.js'
@@ -64,6 +71,21 @@ function formatBudgetPause(gate: BudgetDecision, processed?: number): string {
   const thr = Math.round(PAUSE_THRESHOLD * 100)
   const tail = processed === undefined ? '' : ` Processed ${processed} task(s).`
   return `\n⏸  Budget guard: $${gate.spentUsd.toFixed(2)} / $${gate.budgetUsd} this month (${pct}%) ≥ ${thr}% — new dispatch paused.${tail} Raise SDLC_MONTHLY_BUDGET_USD to override.\n`
+}
+
+/** Format the usage-window pacing-pause notice (gh-87). */
+function formatPacingPause(gate: PacingDecision, processed?: number): string {
+  const window = gate.inActiveWindow ? 'active' : 'off'
+  const tail = processed === undefined ? '' : ` Processed ${processed} task(s).`
+  return `\n⏸  Pacing guard: ~${gate.windowSpentTokens.toLocaleString()} tok spent + ~${gate.estimatedTaskTokens.toLocaleString()} est for next task would exceed the ${window}-window cap (~${Math.round(gate.capTokens).toLocaleString()} tok / ${WINDOW_HOURS}h).${tail} Raise SDLC_WINDOW_TOKEN_BUDGET / SDLC_PACING_CAP_* to override.\n`
+}
+
+/** Format the rework/revert-rate trip notice (gh-87). */
+function formatReworkPause(gate: RevertDecision, processed?: number): string {
+  const pct = Math.round(gate.rate * 100)
+  const thr = Math.round(gate.threshold * 100)
+  const tail = processed === undefined ? '' : ` Processed ${processed} task(s).`
+  return `\n⏸  Rework guard: ${gate.reworked}/${gate.total} tasks reworked (${pct}%) > ${thr}% over the last ${WINDOW_HOURS}h — new dispatch paused.${tail} Review the Blocked queue, then raise SDLC_REVERT_RATE_THRESHOLD to resume.\n`
 }
 
 export async function runDispatch(argv: readonly string[]): Promise<number> {
@@ -142,9 +164,15 @@ async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Prom
     `\nDispatching ${task.id} on ${slug} (tier ${task.tier}, target=${cfg.repoPath})...\n\n`,
   )
 
-  const gate = await budgetGate(new Date(), (cfg as { webhookTopic?: string }).webhookTopic)
+  const webhookTopic = (cfg as { webhookTopic?: string }).webhookTopic
+  const gate = await budgetGate(new Date(), webhookTopic)
   if (gate.action === 'pause') {
     process.stderr.write(formatBudgetPause(gate))
+    return 0
+  }
+  const pacing = await pacingGate(new Date(), task.tier, webhookTopic)
+  if (pacing.action === 'pause') {
+    process.stderr.write(formatPacingPause(pacing))
     return 0
   }
 
@@ -208,13 +236,21 @@ async function dispatchFromBoard(
     return 1
   }
 
+  const webhookTopic = (cfg as { webhookTopic?: string }).webhookTopic
   let processed = 0
   let sawFailure = false
   while (processed < maxTasks) {
-    const gate = await budgetGate(new Date(), (cfg as { webhookTopic?: string }).webhookTopic)
+    const gate = await budgetGate(new Date(), webhookTopic)
     if (gate.action === 'pause') {
       process.stdout.write(formatBudgetPause(gate, processed))
       return sawFailure ? 1 : 0
+    }
+    // Rework/revert-rate trip (gh-87): halt the fleet for human review once recent
+    // rework exceeds the threshold — quality brake, independent of the next task.
+    const rework = await reworkRateGate(new Date(), webhookTopic)
+    if (rework.action === 'pause') {
+      process.stdout.write(formatReworkPause(rework, processed))
+      return 0
     }
     const ready = await listItems(project.value, 'Ready')
     if (!ready.ok) {
@@ -229,6 +265,15 @@ async function dispatchFromBoard(
 
     // Convert ProjectItem → Task (heuristic; PLANNER would do this more thoroughly)
     const task = projectItemToTask(slug, next)
+
+    // Usage-window pacing (gh-87): would STARTING this task overrun the time-aware
+    // 5h-window cap? Pause before starting → never rate-limited mid-task. The card
+    // stays in Ready for the next window.
+    const pacing = await pacingGate(new Date(), task.tier, webhookTopic)
+    if (pacing.action === 'pause') {
+      process.stdout.write(formatPacingPause(pacing, processed))
+      return 0
+    }
 
     // Move to Building
     const moveResult = await moveItem(project.value, next.id, 'Building')
