@@ -311,6 +311,12 @@ describe('parseRateLimitStatus', () => {
     const stdout = `not json\n${event('allowed')}\n{partial`
     expect(parseRateLimitStatus(stdout)?.status).toBe('allowed')
   })
+
+  it('skips lines that mention "rate_limit_event" but are not valid JSON', () => {
+    // Passes the includes() guard but JSON.parse throws → catch { continue } (lines 348-350)
+    const stdout = `this line has rate_limit_event text but is not json\n${event('allowed')}`
+    expect(parseRateLimitStatus(stdout)?.status).toBe('allowed')
+  })
 })
 
 describe('rateLimitTrips', () => {
