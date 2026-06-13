@@ -84,15 +84,53 @@ export async function notify(
   }
 }
 
+const WEBHOOK_TOKEN_ENV = 'SDLC_NTFY_TOKEN'
+
+/**
+ * Resolve the ntfy auth token required for INBOUND webhook dispatch.
+ *
+ * Webhook mode is **fail-closed**: an inbound `dispatch <slug>` message can
+ * launch the full pipeline, so the subscription MUST authenticate against a
+ * token-protected (reserved/self-hosted) ntfy topic. A public, unauthenticated
+ * topic is unsafe — anyone who learns its name can publish `dispatch <slug>`
+ * and remotely trigger us. The Bearer token only buys real protection when the
+ * topic's ACL restricts publishing to authenticated parties; on a public topic
+ * a token would be theatre, so we don't pretend otherwise.
+ *
+ * Reads `SDLC_NTFY_TOKEN` (parallel to `SDLC_DASHBOARD_TOKEN`). If it's unset or
+ * empty we refuse to subscribe — which also means `--webhook` is effectively
+ * off by default until an operator deliberately configures a protected topic.
+ * The secret is always explicit and operator-controlled; never auto-generated.
+ */
+export function requireWebhookToken(
+  env: NodeJS.ProcessEnv = process.env,
+): Result<string, AppError> {
+  const token = env[WEBHOOK_TOKEN_ENV]
+  if (!token || token.length === 0) {
+    return err(
+      makeError(
+        'ntfy.webhook-token-missing',
+        `${WEBHOOK_TOKEN_ENV} is not set — webhook dispatch is disabled without it.`,
+        {
+          fix: `Reserve/protect the ntfy topic so only authenticated clients can publish, then set ${WEBHOOK_TOKEN_ENV} to that access token (e.g. \`ntfy token add\`, or \`openssl rand -hex 32\` for a self-hosted topic). Never use a public topic for --webhook: anyone who knows its name could remotely trigger the pipeline.`,
+        },
+      ),
+    )
+  }
+  return ok(token)
+}
+
 /**
  * Subscribe to a ntfy topic via long-polling JSON stream.
  *
  * Returns an async iterator that yields each incoming message.
  * Caller can break to stop subscribing.
  *
- * Used by the dispatch command's `--webhook` mode to listen for
- * remote dispatch triggers from phone:
- *   curl -d "dispatch trip-research" ntfy.sh/<topic>
+ * Used by the dispatch command's `--webhook` mode to listen for remote dispatch
+ * triggers. The topic MUST be token-protected (see {@link requireWebhookToken});
+ * the configured `token` rides the `Authorization: Bearer` header below so we
+ * authenticate to the reserved topic:
+ *   ntfy publish --token <tok> <protected-topic> "dispatch trip-research"
  */
 export async function* subscribe(
   config: NtfyConfig,
