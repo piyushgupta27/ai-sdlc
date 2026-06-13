@@ -8,8 +8,10 @@
  *       board, takes the first ticket, runs the orchestrator, and moves the
  *       card based on outcome (Done / Blocked).
  *
- * Webhook mode (--webhook --topic <ntfy>) subscribes to ntfy.sh and dispatches
- * on every received `dispatch <slug>` message.
+ * Webhook mode (--webhook --topic <ntfy>) subscribes to a token-protected ntfy
+ * topic and dispatches on every received `dispatch <slug>` message. It requires
+ * SDLC_NTFY_TOKEN (a public topic is unsafe — anyone who knows it could trigger
+ * the pipeline); the dispatcher only acts on triggers for its own onboarded slug.
  */
 
 import { spawn } from 'node:child_process'
@@ -22,7 +24,7 @@ import {
   listItems,
   moveItem,
 } from '../../integrations/github-projects.js'
-import { parseDispatchTrigger, subscribe } from '../../integrations/ntfy.js'
+import { parseDispatchTrigger, requireWebhookToken, subscribe } from '../../integrations/ntfy.js'
 import { type BudgetDecision, PAUSE_THRESHOLD, budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
 import { projectDir, readState } from '../../orchestrator/state.js'
@@ -38,7 +40,8 @@ Usage:
 Options:
   --task-spec <file>   Hand-crafted Task JSON (manual testing path)
   --max-tasks <n>      Stop after N tasks (default 5)
-  --webhook            Subscribe to ntfy.sh and dispatch on each trigger
+  --webhook            Subscribe to a protected ntfy topic and dispatch on each trigger
+                       (requires SDLC_NTFY_TOKEN; a public topic is unsafe)
   --topic <name>       ntfy.sh topic to subscribe to (required if --webhook)
   --owner <handle>     GitHub owner (defaults to project config)
   --json               JSON output
@@ -50,8 +53,9 @@ Examples:
   # Manual test with a hand-crafted Task
   pnpm sdlc dispatch --project trip-research --task-spec /tmp/task.json
 
-  # Mobile dispatch — subscribe to ntfy; trigger from phone
-  pnpm sdlc dispatch --project trip-research --webhook --topic <ntfy-slug>
+  # Mobile dispatch — subscribe to a protected ntfy topic; trigger from phone
+  #   (set SDLC_NTFY_TOKEN to the topic's access token first)
+  SDLC_NTFY_TOKEN=<tok> pnpm sdlc dispatch --project trip-research --webhook --topic <ntfy-slug>
 `
 
 /** Format the budget-pause notice (shared by both dispatch paths). */
@@ -101,7 +105,16 @@ export async function runDispatch(argv: readonly string[]): Promise<number> {
       process.stderr.write('❌ --webhook requires --topic <ntfy-topic>\n')
       return 2
     }
-    return dispatchWebhookLoop(slug, topic, maxTasks)
+    // Fail closed: an inbound `dispatch <slug>` can launch the full pipeline, so
+    // the subscription must authenticate against a token-protected topic. Refuse
+    // to listen on an unauthenticated topic (gh-12).
+    const token = requireWebhookToken()
+    if (!token.ok) {
+      process.stderr.write(`❌ ${token.error.message}\n`)
+      if (token.error.fix) process.stderr.write(`   Fix: ${token.error.fix}\n`)
+      return 2
+    }
+    return dispatchWebhookLoop(slug, topic, token.value, maxTasks)
   }
 
   return dispatchFromBoard(slug, args, maxTasks)
@@ -307,14 +320,15 @@ async function dispatchFromBoard(
 async function dispatchWebhookLoop(
   slug: ProjectSlug,
   topic: string,
+  token: string,
   maxTasks: number,
 ): Promise<number> {
   process.stdout.write(
-    `\n🔔 Subscribed to ntfy.sh/${topic}\n   Send "dispatch ${slug}" from anywhere to trigger.\n   Ctrl-C to stop.\n\n`,
+    `\n🔔 Subscribed to protected ntfy topic ${topic}\n   Publish "dispatch ${slug}" (authenticated) to trigger.\n   Ctrl-C to stop.\n\n`,
   )
 
   let dispatched = 0
-  for await (const msg of subscribe({ topic })) {
+  for await (const msg of subscribe({ topic, token })) {
     const trigger = parseDispatchTrigger(msg)
     if (!trigger) continue
     if (trigger.slug !== slug) {
