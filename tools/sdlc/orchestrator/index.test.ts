@@ -16,8 +16,13 @@ import {
   type Tier,
   type TrustState,
   asProjectSlug,
+  err,
+  makeError,
   ok,
 } from '../types/index.js'
+
+const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }))
+vi.mock('node:child_process', () => ({ spawnSync: spawnSyncMock }))
 
 vi.mock('../agents/builder/index.js', () => ({ runBuilder: vi.fn() }))
 vi.mock('../agents/tester/index.js', () => ({ runTester: vi.fn() }))
@@ -44,7 +49,7 @@ import { runBuilder } from '../agents/builder/index.js'
 import { runChecker } from '../agents/checker/index.js'
 import { runReviewer } from '../agents/reviewer/index.js'
 import { runTester } from '../agents/tester/index.js'
-import { runTask } from './index.js'
+import { rescueCommit, runTask } from './index.js'
 import { readState } from './state.js'
 
 function agentResult<T>(output: T, outcome: AgentResult<T>['outcome'] = 'success'): AgentResult<T> {
@@ -163,5 +168,154 @@ describe('runTask — trustState×tier COMMIT gate wiring (#62)', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.value.result).toBe('merged')
+  })
+})
+
+// ─── rescue commit on subagent timeout (#107) ────────────────────────────
+
+function makeTimeoutError() {
+  return err(
+    makeError('subagent.timeout', 'subagent killed on idle', {
+      cause: {
+        reason: 'idle',
+        idleSec: 120,
+        ceilingSec: 600,
+        recoveredTokens: { input: 100, output: 50 },
+        recoveredCostUsd: 0.0123,
+        toolCalls: 4,
+        lastActivityAgoMs: 121_000,
+        stdout: '',
+        stderr: '',
+      },
+    }),
+  )
+}
+
+describe('rescueCommit — best-effort partial work recovery', () => {
+  beforeEach(() => {
+    spawnSyncMock.mockReset()
+  })
+
+  it('git add + commit fire when worktree is dirty', async () => {
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 0, stdout: ' M file.ts\n', stderr: '' }) // status
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' }) // add
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' }) // commit
+
+    await rescueCommit('/tmp/repo', 'gh-107')
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(3)
+    expect(spawnSyncMock.mock.calls[0][1]).toEqual(['-C', '/tmp/repo', 'status', '--porcelain'])
+    expect(spawnSyncMock.mock.calls[1][1]).toEqual(['-C', '/tmp/repo', 'add', '-A'])
+    expect(spawnSyncMock.mock.calls[2][1]).toEqual([
+      '-C',
+      '/tmp/repo',
+      'commit',
+      '--no-verify',
+      '-m',
+      'wip: partial work rescued from timed-out task gh-107',
+    ])
+  })
+
+  it('is a no-op (no add, no commit) when worktree is clean', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
+
+    await rescueCommit('/tmp/repo', 'gh-107')
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1)
+    expect(spawnSyncMock.mock.calls[0][1]).toContain('status')
+  })
+
+  it('never throws when git itself fails (e.g. not a repo)', async () => {
+    spawnSyncMock.mockReturnValueOnce({
+      status: 128,
+      stdout: '',
+      stderr: 'fatal: not a git repository',
+    })
+
+    await expect(rescueCommit('/tmp/repo', 'gh-107')).resolves.toBeUndefined()
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('swallows thrown errors (best-effort never propagates)', async () => {
+    spawnSyncMock.mockImplementation(() => {
+      throw new Error('spawn ENOENT')
+    })
+
+    await expect(rescueCommit('/tmp/repo', 'gh-107')).resolves.toBeUndefined()
+  })
+})
+
+describe('finalizeFailure — rescue commit wiring (#107)', () => {
+  beforeEach(() => {
+    spawnSyncMock.mockReset()
+    vi.mocked(readState).mockResolvedValue(ok(makeState('SUPERVISED')))
+  })
+
+  it('timeout error with dirty worktree → git add + commit called; notes mention rescue', async () => {
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 0, stdout: ' M src/a.ts\n', stderr: '' })
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
+    vi.mocked(runBuilder).mockResolvedValueOnce(makeTimeoutError())
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('failed')
+    expect(r.value.notes).toContain('rescue commit attempted in worktree')
+
+    const gitCalls = spawnSyncMock.mock.calls.filter((c) => c[0] === 'git')
+    expect(gitCalls).toHaveLength(3)
+    expect(gitCalls[1][1]).toEqual(['-C', '/tmp/sdlc-test-repo', 'add', '-A'])
+    expect(gitCalls[2][1][2]).toBe('commit')
+  })
+
+  it('timeout error with clean worktree → status checked, but no add/commit', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
+    vi.mocked(runBuilder).mockResolvedValueOnce(makeTimeoutError())
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('failed')
+    expect(r.value.notes).toContain('rescue commit attempted in worktree')
+
+    const gitCalls = spawnSyncMock.mock.calls.filter((c) => c[0] === 'git')
+    expect(gitCalls).toHaveLength(1)
+    expect(gitCalls[0][1]).toContain('status')
+  })
+
+  it('non-timeout error → rescueCommit NOT invoked, notes omit rescue language', async () => {
+    vi.mocked(runBuilder).mockResolvedValueOnce(
+      err(makeError('builder.crash', 'something else went wrong')),
+    )
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('failed')
+    expect(r.value.notes).not.toContain('rescue commit')
+
+    const gitCalls = spawnSyncMock.mock.calls.filter((c) => c[0] === 'git')
+    expect(gitCalls).toHaveLength(0)
   })
 })
