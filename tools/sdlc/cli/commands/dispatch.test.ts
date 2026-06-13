@@ -25,14 +25,14 @@ vi.mock('../../orchestrator/budget.js', () => ({
 import { runDispatch } from './dispatch.js'
 
 describe('runDispatch --webhook fail-closed (gh-12)', () => {
-  const ORIG_TOKEN = process.env.SDLC_NTFY_TOKEN
-
+  // vi.stubEnv with `undefined` truly removes the var (preserving the "absent"
+  // case) and unstubAllEnvs restores the original — no `delete` operator, which
+  // Biome's lint/performance/noDelete rejects.
   beforeEach(() => {
-    delete process.env.SDLC_NTFY_TOKEN
+    vi.stubEnv('SDLC_NTFY_TOKEN', undefined)
   })
   afterEach(() => {
-    if (ORIG_TOKEN !== undefined) process.env.SDLC_NTFY_TOKEN = ORIG_TOKEN
-    else delete process.env.SDLC_NTFY_TOKEN
+    vi.unstubAllEnvs()
   })
 
   it('returns 2 when SDLC_NTFY_TOKEN is absent', async () => {
@@ -41,13 +41,13 @@ describe('runDispatch --webhook fail-closed (gh-12)', () => {
   })
 
   it('returns 2 when SDLC_NTFY_TOKEN is an empty string', async () => {
-    process.env.SDLC_NTFY_TOKEN = ''
+    vi.stubEnv('SDLC_NTFY_TOKEN', '')
     const code = await runDispatch(['--project', 'test-proj', '--webhook', '--topic', 'my-topic'])
     expect(code).toBe(2)
   })
 
   it('returns 2 when --webhook is given without --topic', async () => {
-    process.env.SDLC_NTFY_TOKEN = 'tok'
+    vi.stubEnv('SDLC_NTFY_TOKEN', 'tok')
     const code = await runDispatch(['--project', 'test-proj', '--webhook'])
     expect(code).toBe(2)
   })

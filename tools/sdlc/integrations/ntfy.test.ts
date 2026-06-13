@@ -71,7 +71,10 @@ describe('notify', () => {
   })
 
   it('returns err(ntfy.non-2xx) on a non-2xx response', async () => {
-    vi.stubGlobal('fetch', async () => new Response('Forbidden', { status: 403, statusText: 'Forbidden' }))
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response('Forbidden', { status: 403, statusText: 'Forbidden' }),
+    )
     const result = await notify({ topic: 'my-topic' }, { title: 'T', message: 'Hello' })
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('expected err')
@@ -116,7 +119,13 @@ describe('notify', () => {
     })
     await notify(
       { topic: 'my-topic' },
-      { title: 'T', message: 'Hello', priority: 5, clickUrl: 'https://example.com', tags: ['robot'] },
+      {
+        title: 'T',
+        message: 'Hello',
+        priority: 5,
+        clickUrl: 'https://example.com',
+        tags: ['robot'],
+      },
     )
     expect(captured.Priority).toBe('5')
     expect(captured.Click).toBe('https://example.com')
@@ -170,7 +179,10 @@ describe('subscribe', () => {
   })
 
   it('throws when subscribe response is not ok', async () => {
-    vi.stubGlobal('fetch', async () => new Response('', { status: 401, statusText: 'Unauthorized' }))
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response('', { status: 401, statusText: 'Unauthorized' }),
+    )
     const gen = subscribe({ topic: 't' })
     await expect(gen.next()).rejects.toThrow('ntfy.sh subscribe failed: 401')
   })
@@ -188,9 +200,7 @@ describe('subscribe', () => {
 
   it('skips empty lines in the stream', async () => {
     const msg: NtfyMessage = { id: '1', time: 0, event: 'message', topic: 't', message: 'ok' }
-    vi.stubGlobal('fetch', async () =>
-      makeStreamResponse(['\n', '\n', `${JSON.stringify(msg)}\n`]),
-    )
+    vi.stubGlobal('fetch', async () => makeStreamResponse(['\n', '\n', `${JSON.stringify(msg)}\n`]))
     const collected: NtfyMessage[] = []
     for await (const m of subscribe({ topic: 't' })) collected.push(m)
     expect(collected).toHaveLength(1)
