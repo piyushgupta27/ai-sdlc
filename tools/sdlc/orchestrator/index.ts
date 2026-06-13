@@ -16,6 +16,7 @@
  * tier-aware retry caps + full HITL gate suite are v1.5+.
  */
 
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -1005,8 +1006,15 @@ async function finalizeFailure(
   // #45: a subagent killed on idle/ceiling spent real tokens before SIGTERM, but
   // its final cost envelope never arrived. The transport recovers that spend from
   // the partial stream — bill it here so a timed-out run isn't logged as $0.
-  const costUsd =
-    totalCost + (isSubagentTimeoutCause(error.cause) ? error.cause.recoveredCostUsd : 0)
+  const timeoutCause = isSubagentTimeoutCause(error.cause) ? error.cause : null
+  const costUsd = totalCost + (timeoutCause ? timeoutCause.recoveredCostUsd : 0)
+
+  // #107: a subagent killed on idle/ceiling leaves uncommitted edits in its
+  // isolated worktree; teardown discards them. Best-effort rescue commit so
+  // partial work lands on the feature branch and is recoverable. Never throws.
+  if (timeoutCause) {
+    await rescueCommit(opts.targetRepo, opts.task.id)
+  }
 
   // Return as a successful TaskRunOutcome with result='failed' — caller
   // still wants the metadata for audit + reporting; the underlying error
@@ -1019,12 +1027,74 @@ async function finalizeFailure(
     auditRunIds,
     costUsd,
     durationMs: performance.now() - startTime,
-    notes: `Agent error: ${error.code} — ${error.message}`,
+    notes: `Agent error: ${error.code} — ${error.message}${
+      timeoutCause ? '; rescue commit attempted in worktree' : ''
+    }`,
   })
 }
 
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+/**
+ * Best-effort rescue commit on subagent timeout (#107).
+ *
+ * When BUILDER/TESTER is SIGTERM'd on idle/ceiling, the isolated worktree may
+ * hold uncommitted partial work that vanishes on teardown. We try to land it
+ * on the feature branch under a `wip:` marker so the next run (or a human)
+ * can recover. Hooks are bypassed with `--no-verify` because partial state is
+ * the whole reason we're here. Any failure is swallowed and logged — this
+ * MUST NOT mask the original timeout error or change orchestrator control flow.
+ *
+ * Stays on `node:child_process` (no new userland deps for an orchestrator-tier file).
+ */
+export async function rescueCommit(targetRepo: string, taskId: string): Promise<void> {
+  try {
+    const status = spawnSync('git', ['-C', targetRepo, 'status', '--porcelain'], {
+      encoding: 'utf8',
+    })
+    if (status.status !== 0) {
+      process.stderr.write(
+        `(rescue commit: git status failed in ${targetRepo}, skipping): ${status.stderr ?? ''}\n`,
+      )
+      return
+    }
+    if (!status.stdout.trim()) return
+
+    const add = spawnSync('git', ['-C', targetRepo, 'add', '-A'], { encoding: 'utf8' })
+    if (add.status !== 0) {
+      process.stderr.write(
+        `(rescue commit: git add failed in ${targetRepo}, skipping): ${add.stderr ?? ''}\n`,
+      )
+      return
+    }
+
+    const commit = spawnSync(
+      'git',
+      [
+        '-C',
+        targetRepo,
+        'commit',
+        '--no-verify',
+        '-m',
+        `wip: partial work rescued from timed-out task ${taskId}`,
+      ],
+      { encoding: 'utf8' },
+    )
+    if (commit.status !== 0) {
+      process.stderr.write(
+        `(rescue commit: git commit failed in ${targetRepo}, skipping): ${commit.stderr ?? ''}\n`,
+      )
+      return
+    }
+  } catch (cause) {
+    process.stderr.write(
+      `(rescue commit failed; non-blocking): ${
+        cause instanceof Error ? cause.message : String(cause)
+      }\n`,
+    )
+  }
 }
 
 // Re-exports for convenience
