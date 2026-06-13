@@ -105,7 +105,7 @@ describe('reworkRateGate', () => {
     await mkdir(auditDir, { recursive: true })
     await writeFile(
       join(auditDir, 'audit.jsonl'),
-      rows.map((r) => JSON.stringify(r)).join('\n') + '\n',
+      `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`,
     )
 
     vi.mocked(listProjects).mockResolvedValueOnce({ ok: true, value: [SLUG] })
