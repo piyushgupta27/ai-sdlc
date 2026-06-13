@@ -209,11 +209,12 @@ async function dispatchFromBoard(
   }
 
   let processed = 0
+  let sawFailure = false
   while (processed < maxTasks) {
     const gate = await budgetGate(new Date(), (cfg as { webhookTopic?: string }).webhookTopic)
     if (gate.action === 'pause') {
       process.stdout.write(formatBudgetPause(gate, processed))
-      return 0
+      return sawFailure ? 1 : 0
     }
     const ready = await listItems(project.value, 'Ready')
     if (!ready.ok) {
@@ -223,7 +224,7 @@ async function dispatchFromBoard(
     const next = ready.value[0]
     if (!next) {
       process.stdout.write(`\nReady column empty. Processed ${processed} task(s).\n`)
-      return 0
+      return sawFailure ? 1 : 0
     }
 
     // Convert ProjectItem → Task (heuristic; PLANNER would do this more thoroughly)
@@ -273,36 +274,42 @@ async function dispatchFromBoard(
         return 1
       }
 
-      // Move card based on outcome
       const outcome = result.value
-      const nextCol = outcome.result === 'merged' ? 'Done' : 'Blocked'
-      await moveItem(project.value, next.id, nextCol)
       printOutcome(outcome)
 
-      // PR-creation step (the orchestrator hands off here per its design note).
-      // Pushes from the sandbox worktree, where BUILDER committed. Only when
-      // there's an actual commit — no-op tasks get the card → Done without a PR.
-      if (outcome.result === 'merged' && outcome.commitSha && outcome.branch) {
-        await maybeCreatePr({
-          repoPath: sandbox.value.workspacePath,
-          slug,
-          task,
-          issueNumber: next.content.number,
-          branch: outcome.branch,
-          commitSha: outcome.commitSha,
-        })
+      if (outcome.result === 'merged') {
+        if (outcome.commitSha && outcome.branch) {
+          // PR-creation step (the orchestrator hands off here per its design note).
+          // Pushes from the sandbox worktree, where BUILDER committed. Card moves
+          // to Done only after the PR is actually open; failure → Blocked so the
+          // board never lies about state (Bug 2 fix).
+          const prOk = await maybeCreatePr({
+            repoPath: sandbox.value.workspacePath,
+            slug,
+            task,
+            issueNumber: next.content.number,
+            branch: outcome.branch,
+            commitSha: outcome.commitSha,
+          })
+          if (prOk) {
+            await moveItem(project.value, next.id, 'Done')
+          } else {
+            await moveItem(project.value, next.id, 'Blocked')
+            sawFailure = true
+          }
+        } else {
+          // No-op task (no commit): card → Done without a PR.
+          await moveItem(project.value, next.id, 'Done')
+        }
+      } else {
+        // failed or hitl-pending: card → Blocked; track for non-zero exit so
+        // CI / overnight monitoring can detect partial runs (Bug 1 fix).
+        await moveItem(project.value, next.id, 'Blocked')
+        sawFailure = true
+        process.stdout.write(`  (${task.id} blocked — continuing to next Ready item)\n`)
       }
 
       processed++
-
-      // v1 prior behavior: break the loop on first HITL/failure. This made
-      // overnight autonomous runs impossible — one stuck ticket blocked the
-      // rest. Now: the card is already moved to Blocked above; just log and
-      // continue. The user reviews the Blocked queue in the morning. The
-      // exit code reflects "any failure" so CI can detect partial runs.
-      if (outcome.result === 'hitl-pending' || outcome.result === 'failed') {
-        process.stdout.write(`  (${task.id} blocked — continuing to next Ready item)\n`)
-      }
     } finally {
       // Tear down the worktree. The branch ref + committed work persist in the
       // shared object store; audit + HITL records persist via the symlinks.
@@ -312,7 +319,7 @@ async function dispatchFromBoard(
   }
 
   process.stdout.write(`\nReached --max-tasks (${maxTasks}). Stopping.\n`)
-  return 0
+  return sawFailure ? 1 : 0
 }
 
 // ─── webhook: subscribe to ntfy.sh ───────────────────────────────────────
@@ -469,9 +476,9 @@ function runShell(cmd: string, args: readonly string[], cwd: string): Promise<Ru
 }
 
 /**
- * After a task completes, push the feature branch + open a PR. Best-effort:
- * if push or gh fail, log + continue (the branch + commit are still local,
- * the user can finish manually).
+ * Push the feature branch and open a PR. Returns true on success, false on
+ * push or PR-creation failure (the branch + commit are still local; the caller
+ * moves the card to Blocked so the board reflects the real state).
  *
  * Permissions note: `git push` and `gh pr create` aren't in the project's
  * .claude/settings.json — first run will prompt the user. Once they grant
@@ -484,7 +491,7 @@ async function maybeCreatePr(args: {
   readonly issueNumber: number
   readonly branch: string
   readonly commitSha: string
-}): Promise<void> {
+}): Promise<boolean> {
   process.stdout.write(`  ▸ Pushing ${args.branch}...\n`)
   const push = await runShell('git', ['push', '-u', 'origin', args.branch], args.repoPath)
   if (push.code !== 0) {
@@ -496,7 +503,7 @@ async function maybeCreatePr(args: {
     process.stderr.write(
       `     Manual: cd ${args.repoPath} && git push -u origin ${args.branch} && gh pr create\n`,
     )
-    return
+    return false
   }
 
   const title = args.task.title
@@ -524,7 +531,8 @@ async function maybeCreatePr(args: {
       process.stderr.write(
         `     ${prResult.stderr.trim().split('\n').slice(0, 3).join('\n     ')}\n`,
       )
-    return
+    return false
   }
   process.stdout.write(`  ✓ PR opened: ${prResult.stdout.trim()}\n`)
+  return true
 }
