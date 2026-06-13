@@ -47,10 +47,14 @@ vi.mock('../../orchestrator/index.js', () => ({
 vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
 }))
-vi.mock('../../integrations/ntfy.js', () => ({
-  parseDispatchTrigger: vi.fn(),
-  subscribe: vi.fn(),
-}))
+vi.mock('../../integrations/ntfy.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...(actual as object),
+    parseDispatchTrigger: vi.fn(),
+    subscribe: vi.fn(),
+  }
+})
 
 // ─── imports (get the mocked versions) ───────────────────────────────────────
 

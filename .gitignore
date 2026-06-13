@@ -53,3 +53,6 @@ test-results/
 
 # Local working log — lives in the private vault, never in this public repo (#108)
 CONTINUATION.md
+
+# VS Code workspace files (local, multi-root)
+*.code-workspace
