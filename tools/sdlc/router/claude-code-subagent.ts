@@ -298,6 +298,9 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       // silence is EXPECTED — the idle timer must not fire; only the ceiling bounds
       // it (#45: the CLI does not stream a foreground subprocess's mid-run output).
       let openToolCalls = 0
+      // Timestamp of the last Write/Edit/Bash tool_use seen — used in the heartbeat
+      // to show stall watchdog state at a glance ("last write 310s ago").
+      let lastMutatingTool: number | undefined
 
       // Terminate the whole process group, escalating SIGTERM → SIGKILL if the child
       // ignores the term signal — otherwise `close` never fires and `dispatch` hangs
@@ -391,8 +394,14 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       // (#45 AC5). Read-only — the ntfy "extend?" HITL is deferred to #48.
       const heartbeat = setInterval(() => {
         const agoSec = Math.round((performance.now() - lastActivity) / 1000)
+        const writeLabel =
+          noProgressSec !== undefined
+            ? lastMutatingTool !== undefined
+              ? `; last write ${Math.round((performance.now() - lastMutatingTool) / 1000)}s ago`
+              : '; no write yet'
+            : ''
         process.stderr.write(
-          `[subagent] ${toolCalls} tool call(s), ${openToolCalls} in flight; last activity ${agoSec}s ago\n`,
+          `[subagent] ${toolCalls} tool call(s), ${openToolCalls} in flight; last activity ${agoSec}s ago${writeLabel}\n`,
         )
       }, PROGRESS_HEARTBEAT_MS)
 
@@ -425,7 +434,10 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         // Progress watchdog: a Write/Edit/Bash tool_use signals genuine forward
         // progress — reset the stall timer. Non-mutating tools (Read/Glob/Grep) do
         // not count; an agent that only reads is not making code changes.
-        if (noProgressSec && hasMutatingToolUse(obj)) armNoProgress()
+        if (noProgressSec && hasMutatingToolUse(obj)) {
+          lastMutatingTool = performance.now()
+          armNoProgress()
+        }
       }
 
       child.stdout.on('data', (chunk: Buffer) => {

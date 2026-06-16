@@ -425,6 +425,7 @@ describe('ClaudeCodeCliTransport progress watchdog (#125)', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.clearAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it('stall-kills with reason=stalled when no Write/Edit/Bash seen within noProgressSec', async () => {
@@ -500,6 +501,22 @@ describe('ClaudeCodeCliTransport progress watchdog (#125)', () => {
 
     // t=65s: re-armed timer fires; openToolCalls=0, no new mutating tool → stall kill
     await vi.advanceTimersByTimeAsync(15_000)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('stalled')
+  })
+
+  it('SDLC_SUBAGENT_NO_PROGRESS_SEC env overrides the caller noProgressSec', async () => {
+    // Env says 10s; caller DISPATCH_WITH_PROGRESS says 30s. Env wins.
+    vi.stubEnv('SDLC_SUBAGENT_NO_PROGRESS_SEC', '10')
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
+    // Advance 10s with no mutating tools — env value should fire, not caller's 30s
+    await vi.advanceTimersByTimeAsync(10_000)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     child.emit('close', null)
     const r = await p

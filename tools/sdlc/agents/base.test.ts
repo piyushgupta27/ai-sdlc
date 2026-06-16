@@ -93,18 +93,32 @@ describe('ceilingSecForTier', () => {
 })
 
 describe('noProgressSec routing (#125)', () => {
-  it('builder receives noProgressSec (progress watchdog enabled)', async () => {
+  it('builder tier 2 receives noProgressSec=300 (standard)', async () => {
     const captured: DispatchOpts[] = []
     const t = makeTransport((o) => captured.push(o))
     await runAgent({ role: 'builder', brief: BASE_BRIEF, tier: 2, transport: t })
     expect(captured[0]?.noProgressSec).toBe(300)
   })
 
-  it('tester receives noProgressSec (progress watchdog enabled)', async () => {
+  it('tester tier 2 receives noProgressSec=300 (standard)', async () => {
     const captured: DispatchOpts[] = []
     const t = makeTransport((o) => captured.push(o))
     await runAgent({ role: 'tester', brief: BASE_BRIEF, tier: 2, transport: t })
     expect(captured[0]?.noProgressSec).toBe(300)
+  })
+
+  it('builder tier 4 receives noProgressSec=180 (trivial — fast write expected)', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'builder', brief: BASE_BRIEF, tier: 4, transport: t })
+    expect(captured[0]?.noProgressSec).toBe(180)
+  })
+
+  it('builder tier 1 receives noProgressSec=500 (exploratory reads expected)', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'builder', brief: BASE_BRIEF, tier: 1, transport: t })
+    expect(captured[0]?.noProgressSec).toBe(500)
   })
 
   it('reviewer does NOT receive noProgressSec (watchdog disabled)', async () => {

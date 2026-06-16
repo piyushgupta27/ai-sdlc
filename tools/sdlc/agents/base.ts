@@ -119,7 +119,7 @@ export async function runAgent<TPayload, TOutput>(
     // Progress watchdog (#125): mutating roles (builder/tester) must call Write/Edit/Bash
     // within noProgressSec or be killed as stalled. Read-only roles (reviewer/checker)
     // omit this — they legitimately read many files before returning JSON output.
-    ...(MUTATING_ROLES.has(opts.role) ? { noProgressSec: NO_PROGRESS_SEC } : {}),
+    ...(MUTATING_ROLES.has(opts.role) ? { noProgressSec: noProgressSecForTier(opts.tier) } : {}),
     ...(opts.brief.blastRadiusApproved
       ? { blastRadiusApproved: opts.brief.blastRadiusApproved }
       : {}),
@@ -162,8 +162,18 @@ function ceilingSecForTier(tier: number, isComplex?: boolean): number {
 /** Roles that write files and benefit from the progress watchdog (#125). */
 const MUTATING_ROLES: ReadonlySet<V1AgentRole> = new Set(['builder', 'tester'])
 
-/** Seconds without Write/Edit/Bash before the progress watchdog fires. */
-const NO_PROGRESS_SEC = 300
+/**
+ * Seconds without Write/Edit/Bash before the progress watchdog fires, sized
+ * by tier. Tier-0/1 tasks legitimately read many files before their first
+ * write (deep exploration, security audits) — a flat 300s would false-fire.
+ * Tier-4 trivial tasks should produce code quickly; the shorter window catches
+ * real stalls sooner.
+ */
+function noProgressSecForTier(tier: number): number {
+  if (tier >= 4) return 180 // trivial — fast write expected
+  if (tier >= 2) return 300 // standard feature work
+  return 500 // tier 0/1 — exploratory reads before first write
+}
 
 function buildUserMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayload>): string {
   return [
