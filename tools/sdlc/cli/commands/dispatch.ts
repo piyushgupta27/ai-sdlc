@@ -340,7 +340,7 @@ async function dispatchFromBoard(
             issueNumber: next.content.number,
             branch: outcome.branch,
             commitSha: outcome.commitSha,
-            validationCommands: cfg.validationCommands,
+            ...(cfg.validationCommands ? { validationCommands: cfg.validationCommands } : {}),
           })
           if (prOk) {
             await moveItem(project.value, next.id, 'Done')
