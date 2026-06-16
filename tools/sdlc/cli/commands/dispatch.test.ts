@@ -45,6 +45,10 @@ vi.mock('../../orchestrator/budget.js', () => ({
 vi.mock('../../orchestrator/index.js', () => ({
   runTask: vi.fn(),
 }))
+vi.mock('../../orchestrator/validations.js', () => ({
+  runValidations: vi.fn(),
+  hasDeterministicFailure: vi.fn(),
+}))
 vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
 }))
@@ -63,8 +67,9 @@ import { findProject, listItems, moveItem } from '../../integrations/github-proj
 import { budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
 import { listProjects, projectDir, readState } from '../../orchestrator/state.js'
+import { hasDeterministicFailure, runValidations } from '../../orchestrator/validations.js'
 import { provisionWorktreeSandbox } from '../../sandbox/index.js'
-import { runDispatch } from './dispatch.js'
+import { buildPrBody, runDispatch } from './dispatch.js'
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -133,7 +138,9 @@ beforeEach(() => {
   vi.mocked(projectDir).mockReturnValue('/fake-sdlc')
   vi.mocked(readState).mockResolvedValue(ok({ slug: asProjectSlug(SLUG) } as never))
   vi.mocked(listProjects).mockResolvedValue(ok([]))
-  existsSyncMock.mockReturnValue(true)
+  // config.json exists; pull_request_template.md does not (integration tests
+  // don't assert on PR body content — null templateContent → minimal fallback)
+  existsSyncMock.mockImplementation((p: string) => String(p).endsWith('config.json'))
   readFileMock.mockResolvedValue(JSON.stringify({ repoPath: '/fake/repo', owner: 'fakeowner' }))
 
   vi.mocked(findProject).mockResolvedValue(ok(fakeProject as never))
@@ -150,6 +157,10 @@ beforeEach(() => {
   )
 
   vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+
+  // Pre-PR validation gate (#112): default green (no commands → gate skipped).
+  vi.mocked(runValidations).mockResolvedValue({ validations: {}, details: [] })
+  vi.mocked(hasDeterministicFailure).mockReturnValue(false)
 
   // Each spawn() call gets a fresh emitter — reusing one EventEmitter across
   // calls means the second call never sees the `close` event.
@@ -299,6 +310,68 @@ describe('dispatchFromBoard — Done/Blocked deferral (Bug 2: PR-create gates Do
   })
 })
 
+// ─── Suite 3 (gh-112): pre-PR validation gate ────────────────────────────────
+
+describe('dispatchFromBoard — pre-PR validation gate (#112)', () => {
+  // Config with validationCommands declared — activates the gate.
+  const CFG_WITH_VALIDATION = JSON.stringify({
+    repoPath: '/fake/repo',
+    owner: 'fakeowner',
+    validationCommands: { typecheck: 'pnpm run typecheck', lint: 'pnpm run lint' },
+  })
+
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('blocks PR and moves card to Blocked when validations are red', async () => {
+    readFileMock.mockResolvedValue(CFG_WITH_VALIDATION)
+    vi.mocked(runValidations).mockResolvedValue({
+      validations: { tsc: 'fail', lint: 'pass' },
+      details: [],
+    })
+    vi.mocked(hasDeterministicFailure).mockReturnValue(true)
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(1)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    // Must NOT push to remote when validations are red
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('opens PR normally when validationCommands are configured and all green', async () => {
+    readFileMock.mockResolvedValue(CFG_WITH_VALIDATION)
+    vi.mocked(runValidations).mockResolvedValue({
+      validations: { tsc: 'pass', lint: 'pass' },
+      details: [],
+    })
+    vi.mocked(hasDeterministicFailure).mockReturnValue(false)
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(runValidations)).toHaveBeenCalledWith(
+      '/tmp/fake-sandbox',
+      expect.objectContaining({ typecheck: 'pnpm run typecheck' }),
+    )
+  })
+
+  it('skips the gate and opens PR when no validationCommands are configured', async () => {
+    // Default readFileMock returns config without validationCommands
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(runValidations)).not.toHaveBeenCalled()
+  })
+})
+
 // ─── Suite 2 (gh-12): webhook fail-closed token gate ─────────────────────────
 
 describe('runDispatch --webhook fail-closed (gh-12)', () => {
@@ -326,5 +399,228 @@ describe('runDispatch --webhook fail-closed (gh-12)', () => {
     vi.stubEnv('SDLC_NTFY_TOKEN', 'tok')
     const code = await runDispatch(['--project', 'test-proj', '--webhook'])
     expect(code).toBe(2)
+  })
+})
+
+// ─── Suite 4: buildPrBody unit tests ─────────────────────────────────────────
+
+// Minimal template that mirrors the real .github/pull_request_template.md
+// structure. Human sections (3, 3b, 5, 8, 9, 10) keep their stub text so tests
+// can assert the platform does NOT overwrite them.
+const FAKE_TEMPLATE = [
+  '## 1 · TL;DR',
+  '',
+  '_stub: one-liner_',
+  '',
+  '## 2 · What & why',
+  '',
+  '_stub: what changed and why_',
+  '',
+  '## 3 · Blast radius & risk',
+  '',
+  '- **Reach** — _stub reach_',
+  '- **Rollback** — _stub rollback_',
+  '',
+  '## 3b · Security review',
+  '',
+  '- **Ran** — _stub security_',
+  '',
+  '## 4 · Evidence',
+  '',
+  '_stub: fill me in_',
+  '',
+  '## 5 · Diff map',
+  '',
+  '_stub diff_',
+  '',
+  '## 6 · Audit & provenance',
+  '',
+  '_stub audit_',
+  '',
+  '## 7 · Governance',
+  '',
+  '_stub governance_',
+  '',
+  '## 8 · Decision',
+  '',
+  '_stub decision_',
+  '',
+  '## 9 · Backlog',
+  '',
+  '_stub backlog_',
+  '',
+  '## 10 · Post-merge',
+  '',
+  '_stub post-merge_',
+].join('\n')
+
+function makeTask(
+  overrides?: Partial<ReturnType<typeof makeTask>>,
+): Parameters<typeof buildPrBody>[0]['task'] {
+  const now = new Date().toISOString()
+  return {
+    project: asProjectSlug('testproject'),
+    id: 'gh-99',
+    storyId: 'gh-99',
+    epicId: 'gh-99',
+    title: 'Add feature X',
+    description: 'Implements feature X as described in the spec.',
+    tier: 2,
+    dod: {
+      acceptanceCriteria: ['X works', 'Y is covered by tests'],
+      nfr: [],
+      testsRequired: ['unit'],
+      coverageFloor: 70,
+      contextUpdates: [],
+      requiresAdr: false,
+    },
+    estimatedCostUsd: 0.5,
+    dependsOn: [],
+    blocks: [],
+    expectedFiles: [],
+    stage: 'PLAN' as const,
+    status: 'planned' as const,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  }
+}
+
+describe('buildPrBody', () => {
+  const baseArgs = {
+    task: makeTask(),
+    issueNumber: 99,
+    branch: 'feature/gh-99',
+    commitSha: 'abcdef1234567890',
+    auditRunIds: ['run-1', 'run-2'],
+    costUsd: 0.0123,
+    retriesUsed: 1,
+    gateDetails: [] as Parameters<typeof buildPrBody>[0]['gateDetails'],
+  }
+
+  describe('templateContent: null — minimal fallback', () => {
+    it('contains Closes reference and summary', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
+      expect(body).toContain('Closes #99')
+      expect(body).toContain('## Summary')
+      expect(body).toContain('Implements feature X')
+    })
+
+    it('lists acceptance criteria as checked items', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
+      expect(body).toContain('- [x] X works')
+      expect(body).toContain('- [x] Y is covered by tests')
+    })
+
+    it('includes audit footer with short SHA and cost', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
+      expect(body).toContain('`abcdef12`')
+      expect(body).toContain('$0.0123')
+    })
+
+    it('does not include template section headers', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
+      expect(body).not.toContain('## 1 ·')
+      expect(body).not.toContain('## 4 ·')
+    })
+  })
+
+  describe('templateContent: string — dynamic template parsing', () => {
+    it('preserves all section headers from the template', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      for (const sec of [
+        '## 1 ·',
+        '## 2 ·',
+        '## 3 ·',
+        '## 3b ·',
+        '## 4 ·',
+        '## 5 ·',
+        '## 6 ·',
+        '## 7 ·',
+        '## 8 ·',
+        '## 9 ·',
+        '## 10 ·',
+      ]) {
+        expect(body).toContain(sec)
+      }
+    })
+
+    it('section 1 (TL;DR) is filled with issue ref — not template stub', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('closes #99')
+      expect(body).toContain('gh-99')
+      expect(body).not.toContain('_stub: one-liner_')
+    })
+
+    it('human sections preserve the template stub text unchanged', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('- **Reach** — _stub reach_') // §3 preserved
+      expect(body).toContain('- **Ran** — _stub security_') // §3b preserved
+      expect(body).toContain('_stub diff_') // §5 preserved
+      expect(body).toContain('_stub decision_') // §8 preserved
+    })
+
+    it('a new section added to the template passes through verbatim', () => {
+      const extendedTemplate = `${FAKE_TEMPLATE}\n## 11 · Performance\n\n_stub perf_\n`
+      const body = buildPrBody({ ...baseArgs, templateContent: extendedTemplate })
+      expect(body).toContain('## 11 · Performance')
+      expect(body).toContain('_stub perf_')
+    })
+
+    it('section 4 (Evidence) lists audit run IDs and gate status', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('run-1, run-2')
+      expect(body).toContain('no configured checks run')
+      expect(body).not.toContain('_stub: fill me in_') // stub replaced
+    })
+
+    it('section 4 with gateDetails shows check results', () => {
+      const body = buildPrBody({
+        ...baseArgs,
+        gateDetails: [
+          { check: 'tsc', command: 'pnpm typecheck', result: 'pass' as const, exitCode: 0 },
+          { check: 'lint', command: 'pnpm lint', result: 'pass' as const, exitCode: 0 },
+        ],
+        templateContent: FAKE_TEMPLATE,
+      })
+      expect(body).toContain('tsc pass')
+      expect(body).toContain('lint pass')
+    })
+
+    it('section 4 acceptance criteria are indented checked items', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('  - [x] X works')
+      expect(body).toContain('  - [x] Y is covered by tests')
+    })
+
+    it('section 6 includes branch, short SHA, retries, and cost', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('`feature/gh-99`')
+      expect(body).toContain('`abcdef12`')
+      expect(body).toContain('retries: 1')
+      expect(body).toContain('$0.0123')
+      expect(body).not.toContain('_stub audit_') // stub replaced
+    })
+
+    it('section 7 governance checklist replaces stub with unchecked items', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('- [ ] PR-only, squash')
+      expect(body).toContain('- [ ] No open P0/P1')
+      expect(body).not.toContain('_stub governance_') // stub replaced
+    })
+
+    it('truncates TL;DR to 280 chars with ellipsis for long descriptions', () => {
+      const body = buildPrBody({
+        ...baseArgs,
+        task: makeTask({ description: 'A'.repeat(400) }),
+        templateContent: FAKE_TEMPLATE,
+      })
+      expect(body).toContain('...')
+    })
+
+    it('does not truncate short descriptions', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).not.toContain('...')
+    })
   })
 })
