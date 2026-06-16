@@ -115,7 +115,11 @@ export async function runAgent<TPayload, TOutput>(
     // Activity-based timeout (#45): the transport idle-kills genuinely-hung agents;
     // here we only size the absolute ceiling by task category (tier) so heavy
     // code+test work isn't capped like a trivial edit. Env overrides globally.
-    ceilingSec: ceilingSecForTier(opts.tier),
+    ceilingSec: ceilingSecForTier(opts.tier, opts.isComplex),
+    // Progress watchdog (#125): mutating roles (builder/tester) must call Write/Edit/Bash
+    // within noProgressSec or be killed as stalled. Read-only roles (reviewer/checker)
+    // omit this — they legitimately read many files before returning JSON output.
+    ...(MUTATING_ROLES.has(opts.role) ? { noProgressSec: NO_PROGRESS_SEC } : {}),
     ...(opts.brief.blastRadiusApproved
       ? { blastRadiusApproved: opts.brief.blastRadiusApproved }
       : {}),
@@ -138,17 +142,28 @@ export async function runAgent<TPayload, TOutput>(
 }
 
 /**
- * Absolute-ceiling seconds by task tier (#45). Trivial work (typos/docs) caps
- * fast; Red-zone / large / careful tiers get headroom. The transport's idle timer
- * bounds genuinely-hung agents regardless, so a generous ceiling is safe — it only
- * fires for an agent that is *still streaming* past the cap. Env
- * `SDLC_SUBAGENT_CEILING_SEC` (resolved in the transport) overrides globally.
+ * Absolute-ceiling seconds by task tier (#125). The ceiling is now a backstop —
+ * the progress watchdog (no Write/Edit/Bash for 300s) is the primary stall detector
+ * for builder-class agents. The ceiling only fires for agents that ARE writing but
+ * are genuinely very slow (e.g. a massive refactor with continuous tool activity).
+ * Env `SDLC_SUBAGENT_CEILING_SEC` (resolved in the transport) overrides globally.
+ * Complex tasks (`isComplex`) get +600s headroom on top of the tier baseline.
  */
-function ceilingSecForTier(tier: number): number {
-  if (tier >= 4) return 300 // trivial
-  if (tier >= 2) return 600 // standard feature work
-  return 1200 // tier 0/1 — Red-zone / complex / careful
+function ceilingSecForTier(tier: number, isComplex?: boolean): number {
+  let base: number
+  if (tier >= 4)
+    base = 600 // trivial — progress watchdog (300s) fires first on stall
+  else if (tier >= 2)
+    base = 2400 // standard feature work backstop
+  else base = 3600 // tier 0/1 — Red-zone / complex / careful
+  return base + (isComplex ? 600 : 0)
 }
+
+/** Roles that write files and benefit from the progress watchdog (#125). */
+const MUTATING_ROLES: ReadonlySet<V1AgentRole> = new Set(['builder', 'tester'])
+
+/** Seconds without Write/Edit/Bash before the progress watchdog fires. */
+const NO_PROGRESS_SEC = 300
 
 function buildUserMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayload>): string {
   return [

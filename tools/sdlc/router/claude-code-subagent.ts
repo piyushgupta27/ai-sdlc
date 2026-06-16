@@ -41,6 +41,13 @@ export interface DispatchOpts {
   readonly ceilingSec?: number
   /** @deprecated Use `ceilingSec`. Kept for back-compat; treated as the ceiling. */
   readonly timeoutSec?: number
+  /**
+   * Progress watchdog (#125): kill with reason `'stalled'` if no Write, Edit,
+   * or Bash tool is invoked for this many seconds. Omit to disable (default for
+   * read-only roles like reviewer and checker). Env `SDLC_SUBAGENT_NO_PROGRESS_SEC`
+   * overrides globally.
+   */
+  readonly noProgressSec?: number
   /** Optional: BLAST_RADIUS_APPROVED env passthrough for Red zone writes */
   readonly blastRadiusApproved?: string
 }
@@ -77,7 +84,7 @@ export interface DispatchResponse {
  * `toolCalls` explain the kill.
  */
 export interface SubagentTimeoutCause {
-  readonly reason: 'idle' | 'ceiling'
+  readonly reason: 'idle' | 'ceiling' | 'stalled'
   readonly idleSec: number
   readonly ceilingSec: number
   readonly recoveredTokens: {
@@ -115,9 +122,13 @@ export interface SubagentTransport {
  * Idle/ceiling defaults (seconds) for activity-based liveness (#45). A working
  * agent streams continuously → never idle-killed; the ceiling is the absolute
  * backstop. Both overridable per-dispatch (DispatchOpts) or globally via env.
+ *
+ * The ceiling is intentionally generous — stall detection (no Write/Edit/Bash
+ * for `DEFAULT_NO_PROGRESS_SEC`) is the primary early-termination mechanism
+ * for builder-class agents that go in circles without producing code.
  */
 const DEFAULT_IDLE_SEC = 120
-const DEFAULT_CEILING_SEC = 600
+const DEFAULT_CEILING_SEC = 3600
 /** How often to emit a live-progress line to stderr while an agent runs. */
 const PROGRESS_HEARTBEAT_MS = 15_000
 /** Grace period after SIGTERM before escalating to SIGKILL (so a child that
@@ -218,6 +229,12 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       opts.ceilingSec ??
       opts.timeoutSec ??
       DEFAULT_CEILING_SEC
+    // Progress watchdog: disabled when noProgressSec is undefined (read-only roles).
+    // Env override applies only when the caller has opted the role in (not undefined).
+    const noProgressSec =
+      opts.noProgressSec !== undefined
+        ? (envSec('SDLC_SUBAGENT_NO_PROGRESS_SEC') ?? opts.noProgressSec)
+        : undefined
 
     return new Promise((resolve) => {
       const args = [
@@ -273,7 +290,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       let parseBuf = ''
       let stderr = ''
       let lineBuf = ''
-      let killReason: 'idle' | 'ceiling' | null = null
+      let killReason: 'idle' | 'ceiling' | 'stalled' | null = null
       let lastActivity = performance.now()
       let toolCalls = 0
       // Tool calls seen (tool_use) minus completed (tool_result). While > 0 the
@@ -346,6 +363,22 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       }
       armIdle()
 
+      // Progress watchdog (#125): fires if no Write, Edit, or Bash tool is invoked
+      // for noProgressSec. Catches the "reading in circles" stall where the model
+      // generates prose/thinking but never produces code — a pattern idle doesn't
+      // catch because the agent IS producing output (resetting the idle timer).
+      // Disabled when noProgressSec is undefined (read-only roles: reviewer, checker).
+      let noProgressTimer: ReturnType<typeof setTimeout> | undefined
+      const armNoProgress = () => {
+        if (!noProgressSec) return
+        clearTimeout(noProgressTimer)
+        noProgressTimer = setTimeout(() => {
+          if (killReason) return
+          killChild('stalled')
+        }, noProgressSec * 1000)
+      }
+      armNoProgress() // arm at start; reset each time a mutating tool is seen
+
       // Live progress to stderr so `dispatch` shows activity, not a silent hang
       // (#45 AC5). Read-only — the ntfy "extend?" HITL is deferred to #48.
       const heartbeat = setInterval(() => {
@@ -358,6 +391,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
       const clearTimers = () => {
         clearTimeout(ceilingTimer)
         clearTimeout(idleTimer)
+        clearTimeout(noProgressTimer)
         clearTimeout(sigkillTimer)
         clearInterval(heartbeat)
       }
@@ -380,6 +414,10 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         const { opened, closed } = countToolTransitions(obj)
         toolCalls += opened
         openToolCalls = Math.max(0, openToolCalls + opened - closed)
+        // Progress watchdog: a Write/Edit/Bash tool_use signals genuine forward
+        // progress — reset the stall timer. Non-mutating tools (Read/Glob/Grep) do
+        // not count; an agent that only reads is not making code changes.
+        if (noProgressSec && hasMutatingToolUse(obj)) armNoProgress()
       }
 
       child.stdout.on('data', (chunk: Buffer) => {
@@ -450,7 +488,9 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
           const detail =
             killReason === 'idle'
               ? `no output for ${idleSec}s (idle timeout) — likely hung`
-              : `exceeded the ${ceilingSec}s ceiling while still active`
+              : killReason === 'stalled'
+                ? `no Write/Edit/Bash tool in ${noProgressSec}s — reading without progress`
+                : `exceeded the ${ceilingSec}s ceiling while still active`
           resolve(
             err(
               makeError('subagent.timeout', `Claude subagent killed: ${detail}`, {
@@ -458,7 +498,9 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
                 fix:
                   killReason === 'idle'
                     ? 'Agent produced no output for the idle window; inspect captured stderr/stdout.'
-                    : 'If the task is legitimately long, raise the ceiling for this tier or add a `large` label.',
+                    : killReason === 'stalled'
+                      ? 'Agent read files without making code changes. Check if the task needs decomposition via PLANNER, or if a pnpm/git approval prompt is blocking Bash.'
+                      : 'If the task is legitimately long, raise the ceiling for this tier or add a `large` label.',
               }),
             ),
           )
@@ -543,6 +585,27 @@ export function countToolTransitions(obj: Record<string, unknown>): {
     else if (type === 'user' && t === 'tool_result') closed++
   }
   return { opened, closed }
+}
+
+/**
+ * Tools whose invocation constitutes forward progress for mutating roles (#125).
+ * Read/Glob/Grep do not count — an agent that only reads is not producing code.
+ */
+const MUTATING_TOOLS = new Set(['Write', 'Edit', 'Bash'])
+
+/**
+ * Returns true when `obj` is an `assistant` event containing at least one
+ * Write, Edit, or Bash tool_use block — signaling that the agent is actually
+ * making changes, not just reading files in a loop.
+ */
+export function hasMutatingToolUse(obj: Record<string, unknown>): boolean {
+  if (obj.type !== 'assistant') return false
+  const content = (obj.message as { content?: unknown } | undefined)?.content
+  if (!Array.isArray(content)) return false
+  return content.some((block) => {
+    const b = block as { type?: unknown; name?: unknown } | null
+    return b?.type === 'tool_use' && MUTATING_TOOLS.has(b?.name as string)
+  })
 }
 
 /**
