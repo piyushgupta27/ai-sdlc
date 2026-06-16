@@ -31,6 +31,7 @@ vi.mock('node:fs/promises', () => ({ readFile: readFileMock }))
 vi.mock('../../orchestrator/state.js', () => ({
   readState: vi.fn(),
   projectDir: vi.fn(() => '/fake-sdlc'),
+  listProjects: vi.fn(),
 }))
 vi.mock('../../integrations/github-projects.js', () => ({
   findProject: vi.fn(),
@@ -61,7 +62,7 @@ vi.mock('../../integrations/ntfy.js', async (importOriginal) => {
 import { findProject, listItems, moveItem } from '../../integrations/github-projects.js'
 import { budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
-import { projectDir, readState } from '../../orchestrator/state.js'
+import { listProjects, projectDir, readState } from '../../orchestrator/state.js'
 import { provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { runDispatch } from './dispatch.js'
 
@@ -131,6 +132,7 @@ beforeEach(() => {
 
   vi.mocked(projectDir).mockReturnValue('/fake-sdlc')
   vi.mocked(readState).mockResolvedValue(ok({ slug: asProjectSlug(SLUG) } as never))
+  vi.mocked(listProjects).mockResolvedValue(ok([]))
   existsSyncMock.mockReturnValue(true)
   readFileMock.mockResolvedValue(JSON.stringify({ repoPath: '/fake/repo', owner: 'fakeowner' }))
 

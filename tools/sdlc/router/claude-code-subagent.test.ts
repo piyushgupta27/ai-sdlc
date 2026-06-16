@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ClaudeCodeCliTransport,
   countToolTransitions,
+  hasMutatingToolUse,
   isSubagentTimeoutCause,
   parseDispatchPayload,
   recoverUsageFromStream,
@@ -223,6 +224,42 @@ describe('countToolTransitions', () => {
   })
 })
 
+describe('hasMutatingToolUse (#125)', () => {
+  const asst = (name: string) => ({
+    type: 'assistant',
+    message: { content: [{ type: 'tool_use', name }] },
+  })
+  it('returns true for Write', () => expect(hasMutatingToolUse(asst('Write'))).toBe(true))
+  it('returns true for Edit', () => expect(hasMutatingToolUse(asst('Edit'))).toBe(true))
+  it('returns true for Bash', () => expect(hasMutatingToolUse(asst('Bash'))).toBe(true))
+  it('returns false for Read', () => expect(hasMutatingToolUse(asst('Read'))).toBe(false))
+  it('returns false for Grep', () => expect(hasMutatingToolUse(asst('Grep'))).toBe(false))
+  it('returns false for non-assistant event type', () => {
+    expect(
+      hasMutatingToolUse({
+        type: 'user',
+        message: { content: [{ type: 'tool_use', name: 'Write' }] },
+      }),
+    ).toBe(false)
+  })
+  it('returns false for assistant with no content', () => {
+    expect(hasMutatingToolUse({ type: 'assistant', message: {} })).toBe(false)
+  })
+  it('true when Write appears among other non-mutating tools', () => {
+    expect(
+      hasMutatingToolUse({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Read' },
+            { type: 'tool_use', name: 'Write' },
+          ],
+        },
+      }),
+    ).toBe(true)
+  })
+})
+
 // ─── Transport timer behavior (#45) ──────────────────────────────────────────
 // A fake child (EventEmitter) + fake timers let us assert the kill logic without
 // spawning `claude`. pid is left undefined so signalGroup falls back to child.kill
@@ -377,6 +414,129 @@ describe('ClaudeCodeCliTransport timers (#45)', () => {
     } finally {
       killSpy.mockRestore()
     }
+  })
+})
+
+describe('ClaudeCodeCliTransport progress watchdog (#125)', () => {
+  // Long idle window so idle timer never interferes with progress watchdog tests
+  const DISPATCH_WITH_PROGRESS = { ...DISPATCH, noProgressSec: 30, idleTimeoutSec: 200 }
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+    vi.unstubAllEnvs()
+  })
+
+  it('stall-kills with reason=stalled when no Write/Edit/Bash seen within noProgressSec', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
+    // Emit a complete Read round-trip (open + close) — non-mutating, openToolCalls
+    // returns to 0 so the timer fires normally when noProgressSec elapses.
+    const readOpen = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Read' }] },
+    })
+    const readClose = JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${readOpen}\n${readClose}\n`))
+    await vi.advanceTimersByTimeAsync(30_000) // noProgressSec elapses with no Write/Edit/Bash
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('stalled')
+  })
+
+  it('Write tool_use resets the progress timer, preventing stall kill', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
+    // At t=25s, emit a Write tool — resets the 30s progress timer to t+30s=55s
+    await vi.advanceTimersByTimeAsync(25_000)
+    const writeEvent = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Write' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${writeEvent}\n`))
+    // Advance another 25s (total 50s, but timer reset at 25s so only 25s have elapsed since reset)
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(child.kill).not.toHaveBeenCalled() // progress timer reset, no stall yet
+    child.emit('close', 0)
+    await p
+  })
+
+  it('tool in flight (openToolCalls > 0) defers the stall kill until the tool closes', async () => {
+    // Regression guard for the openToolCalls guard in armNoProgress:
+    // a Bash tool running `pnpm test` keeps openToolCalls=1 silently for minutes.
+    // The progress timer must re-arm (not kill) while the tool is open, then fire
+    // once the tool closes and no new mutating tool appears.
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
+
+    // t=5s: Bash tool_use opens (openToolCalls=1, progress timer resets to t=35s)
+    await vi.advanceTimersByTimeAsync(5_000)
+    const bashOpen = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Bash' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${bashOpen}\n`))
+
+    // t=35s: progress timer fires → openToolCalls=1 → re-arms to t=65s; no kill yet
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(child.kill).not.toHaveBeenCalled()
+
+    // t=50s: tool_result closes the Bash call (openToolCalls=0)
+    await vi.advanceTimersByTimeAsync(15_000)
+    const bashClose = JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${bashClose}\n`))
+
+    // t=65s: re-armed timer fires; openToolCalls=0, no new mutating tool → stall kill
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('stalled')
+  })
+
+  it('SDLC_SUBAGENT_NO_PROGRESS_SEC env overrides the caller noProgressSec', async () => {
+    // Env says 10s; caller DISPATCH_WITH_PROGRESS says 30s. Env wins.
+    vi.stubEnv('SDLC_SUBAGENT_NO_PROGRESS_SEC', '10')
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
+    // Advance 10s with no mutating tools — env value should fire, not caller's 30s
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('stalled')
+  })
+
+  it('watchdog is disabled when noProgressSec is not passed', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH) // no noProgressSec
+    // Advance 40s with no mutating tools — should NOT stall-kill (watchdog disabled)
+    await vi.advanceTimersByTimeAsync(40_000)
+    // Only ceiling (100s) or idle (10s) can fire; idle fires first here
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM') // idle-killed, not stalled
+    child.emit('close', null)
+    const r = await p
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('idle') // should be idle, not stalled
   })
 })
 
