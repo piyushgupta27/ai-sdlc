@@ -597,6 +597,7 @@ async function maybeCreatePr(args: {
   }
 
   const templatePath = join(args.repoPath, '.github', 'pull_request_template.md')
+  const templateContent = existsSync(templatePath) ? await readFile(templatePath, 'utf8') : null
   const body = buildPrBody({
     task: args.task,
     issueNumber: args.issueNumber,
@@ -606,7 +607,7 @@ async function maybeCreatePr(args: {
     costUsd: args.costUsd,
     retriesUsed: args.retriesUsed,
     gateDetails,
-    hasTemplate: existsSync(templatePath),
+    templateContent,
   })
 
   process.stdout.write(`  ▸ Opening PR for #${args.issueNumber}...\n`)
@@ -638,18 +639,19 @@ async function maybeCreatePr(args: {
   return true
 }
 
-/**
- * Build the PR body for a platform-generated PR.
- *
- * When the target repo has `.github/pull_request_template.md`, the body follows
- * the template's section structure so human reviewers see the same headers they
- * expect. Sections the platform can fill are filled; sections requiring human
- * judgment (blast-radius narrative, security, decision) are left with a
- * "pending human review" stub so they surface as gaps rather than blank fields.
- *
- * Exported for unit-testing without touching the filesystem.
- */
-export function buildPrBody(args: {
+// ─── PR body builder ─────────────────────────────────────────────────────────
+
+function fmtGate(gateDetails: readonly ValidationDetail[]): string {
+  return gateDetails.length
+    ? gateDetails.map((d) => `${d.check} ${d.result}`).join(' · ')
+    : 'no configured checks run'
+}
+
+function fmtAudit(auditRunIds: readonly string[]): string {
+  return auditRunIds.length ? auditRunIds.join(', ') : 'none'
+}
+
+type PrBodyArgs = {
   readonly task: Task
   readonly issueNumber: number
   readonly branch: string
@@ -658,98 +660,82 @@ export function buildPrBody(args: {
   readonly costUsd: number
   readonly retriesUsed: number
   readonly gateDetails: readonly ValidationDetail[]
-  readonly hasTemplate: boolean
-}): string {
-  const { task, issueNumber, branch, commitSha, auditRunIds, costUsd, retriesUsed, gateDetails } =
-    args
-  const sha = commitSha.slice(0, 8)
-  const acLines = task.dod.acceptanceCriteria.map((ac) => `  - [x] ${ac}`)
-  const gateStr = gateDetails.length
-    ? gateDetails.map((d) => `${d.check} ${d.result}`).join(' · ')
-    : 'no configured checks run'
-  const auditStr = auditRunIds.length ? auditRunIds.join(', ') : 'none'
+  readonly templateContent: string | null
+}
 
-  if (!args.hasTemplate) {
-    return [
-      `Closes #${issueNumber}`,
-      '',
-      '## Summary',
-      task.description.slice(0, 500),
-      '',
-      '## Acceptance criteria',
-      ...task.dod.acceptanceCriteria.map((ac) => `- [x] ${ac}`),
-      '',
-      `_ai-sdlc · BUILDER · \`${branch}\` · commit \`${sha}\` · $${costUsd.toFixed(4)}_`,
-    ].join('\n')
-  }
-
-  // Template-aligned body: mirrors .github/pull_request_template.md section order.
-  // Filled sections: 1, 2, 4 (gates + AC + audit), 6, 7.
-  // Stub sections: 3, 3b, 5, 8, 9, 10 — human reviewer completes these.
-  return [
-    '## 1 · TL;DR',
+// Sections the platform can fill keyed by number/code from the template header
+// (e.g. "## 4 · Evidence" → key "4", "## 3b · Security" → key "3b").
+// Unknown sections are preserved verbatim from the template file — so new
+// sections added to the template automatically appear in platform PRs without
+// any code change.
+type FillFn = (a: PrBodyArgs) => string[]
+const PLATFORM_FILLS: Record<string, FillFn> = {
+  '1': (a) => [
+    a.task.description.length > 280 ? `${a.task.description.slice(0, 277)}...` : a.task.description,
     '',
-    task.description.length > 280 ? `${task.description.slice(0, 277)}...` : task.description,
-    '',
-    `Tier ${task.tier} · closes #${issueNumber} · ${task.id}`,
-    '',
-    '## 2 · What & why',
-    '',
-    task.description,
-    '',
-    '**Alternatives rejected** — n/a (platform-generated).',
-    '',
-    '## 3 · Blast radius & risk',
-    '',
-    '- **Reach** — _pending human review of diff_.',
-    '- **Red-zone** — _pending human review_.',
-    '- **Breaking changes** — none expected; confirm from diff.',
-    '- **Rollback** — clean `git revert`.',
-    '',
-    '## 3b · Security review',
-    '',
-    '- **Ran** — no (platform-generated; human reviewer to assess).',
-    '- **Findings (this PR)** — _pending human review_.',
-    '- **Open security issues** — _pending human review_.',
-    '',
-    '## 4 · Evidence',
-    '',
-    `- **Gates** — ${gateStr}.`,
+    `Tier ${a.task.tier} · closes #${a.issueNumber} · ${a.task.id}`,
+  ],
+  '2': (a) => [a.task.description, '', '**Alternatives rejected** — n/a (platform-generated).'],
+  '4': (a) => [
+    `- **Gates** — ${fmtGate(a.gateDetails)}.`,
     '- **Acceptance criteria** —',
-    ...acLines,
+    ...a.task.dod.acceptanceCriteria.map((ac) => `  - [x] ${ac}`),
     '- **Tests** — per BUILDER/TESTER output; see audit log.',
-    `- **CHECKER** — audit run IDs: ${auditStr}.`,
+    `- **CHECKER** — audit run IDs: ${fmtAudit(a.auditRunIds)}.`,
     '- **Manual** — n/a (platform-generated).',
-    '',
-    '## 5 · Diff map',
-    '',
-    '- _See diff — platform did not enumerate changed files here._',
-    '- **New dependencies** — confirm from diff.',
-    '',
-    '## 6 · Audit & provenance',
-    '',
-    `_ai-sdlc platform-generated._ Audit run IDs: ${auditStr} · branch: \`${branch}\` · commit: \`${sha}\` · retries: ${retriesUsed} · cost: $${costUsd.toFixed(4)}.`,
-    '',
-    '## 7 · Governance',
-    '',
+  ],
+  '6': (a) => [
+    `_ai-sdlc platform-generated._ Audit run IDs: ${fmtAudit(a.auditRunIds)} · branch: \`${a.branch}\` · commit: \`${a.commitSha.slice(0, 8)}\` · retries: ${a.retriesUsed} · cost: $${a.costUsd.toFixed(4)}.`,
+  ],
+  '7': () => [
     '- [ ] PR-only, squash, no direct main push; agent did not self-approve',
     '- [ ] No open P0/P1; CLAUDE.md unchanged (else flagged — always MANAGER-gated)',
     '- [ ] Docs / continuation updated; affected `CONTEXT.md` bubbled up (or n/a)',
     '- [ ] ADR written if required (G1.5), else "no ADR required"',
     '- [ ] Secret-scan / dep-audit / SAST (or n/a)',
-    '',
-    '## 8 · Decision',
-    '',
-    '**Recommend** — _pending human review_.',
-    '',
-    '**Your call** — review diff, validate AC evidence, check governance checklist.',
-    '',
-    '## 9 · Backlog',
-    '',
-    '_none at dispatch time — file issues if gaps found during review._',
-    '',
-    '## 10 · Post-merge',
-    '',
-    '_none._',
-  ].join('\n')
+  ],
+}
+
+/**
+ * Build the PR body for a platform-generated PR.
+ *
+ * Pass `templateContent` (the raw file content of `.github/pull_request_template.md`)
+ * to get a body that mirrors the template's exact section structure. The platform
+ * fills sections it can assert (1, 2, 4, 6, 7); all other sections are preserved
+ * verbatim from the template — so new sections added to the template appear
+ * automatically without any code change. Pass `null` for a minimal fallback body.
+ *
+ * Exported for unit-testing without touching the filesystem.
+ */
+export function buildPrBody(args: PrBodyArgs): string {
+  if (!args.templateContent) {
+    const sha = args.commitSha.slice(0, 8)
+    return [
+      `Closes #${args.issueNumber}`,
+      '',
+      '## Summary',
+      args.task.description.slice(0, 500),
+      '',
+      '## Acceptance criteria',
+      ...args.task.dod.acceptanceCriteria.map((ac) => `- [x] ${ac}`),
+      '',
+      `_ai-sdlc · BUILDER · \`${args.branch}\` · commit \`${sha}\` · $${args.costUsd.toFixed(4)}_`,
+    ].join('\n')
+  }
+
+  // Split template into chunks starting at each ## header. For numbered sections
+  // we know how to fill, replace the content; for all others, keep the template's
+  // own stub text so the human sees exactly what the template author intended.
+  const chunks = args.templateContent.split(/(?=^## )/m)
+  return chunks
+    .map((chunk) => {
+      const header = chunk.match(/^(## [^\n]+)/)?.[1]
+      if (!header) return chunk // preamble before first ##
+      const num = header.match(/^## (\d+[a-z]?)\b/)?.[1]
+      if (!num) return chunk // unnumbered section — preserve
+      const filler = PLATFORM_FILLS[num]
+      if (!filler) return chunk // human section — keep template stub text
+      return [header, '', ...filler(args), '', ''].join('\n')
+    })
+    .join('')
 }

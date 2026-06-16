@@ -138,7 +138,9 @@ beforeEach(() => {
   vi.mocked(projectDir).mockReturnValue('/fake-sdlc')
   vi.mocked(readState).mockResolvedValue(ok({ slug: asProjectSlug(SLUG) } as never))
   vi.mocked(listProjects).mockResolvedValue(ok([]))
-  existsSyncMock.mockReturnValue(true)
+  // config.json exists; pull_request_template.md does not (integration tests
+  // don't assert on PR body content — null templateContent → minimal fallback)
+  existsSyncMock.mockImplementation((p: string) => String(p).endsWith('config.json'))
   readFileMock.mockResolvedValue(JSON.stringify({ repoPath: '/fake/repo', owner: 'fakeowner' }))
 
   vi.mocked(findProject).mockResolvedValue(ok(fakeProject as never))
@@ -402,6 +404,56 @@ describe('runDispatch --webhook fail-closed (gh-12)', () => {
 
 // ─── Suite 4: buildPrBody unit tests ─────────────────────────────────────────
 
+// Minimal template that mirrors the real .github/pull_request_template.md
+// structure. Human sections (3, 3b, 5, 8, 9, 10) keep their stub text so tests
+// can assert the platform does NOT overwrite them.
+const FAKE_TEMPLATE = [
+  '## 1 · TL;DR',
+  '',
+  '_stub: one-liner_',
+  '',
+  '## 2 · What & why',
+  '',
+  '_stub: what changed and why_',
+  '',
+  '## 3 · Blast radius & risk',
+  '',
+  '- **Reach** — _stub reach_',
+  '- **Rollback** — _stub rollback_',
+  '',
+  '## 3b · Security review',
+  '',
+  '- **Ran** — _stub security_',
+  '',
+  '## 4 · Evidence',
+  '',
+  '_stub: fill me in_',
+  '',
+  '## 5 · Diff map',
+  '',
+  '_stub diff_',
+  '',
+  '## 6 · Audit & provenance',
+  '',
+  '_stub audit_',
+  '',
+  '## 7 · Governance',
+  '',
+  '_stub governance_',
+  '',
+  '## 8 · Decision',
+  '',
+  '_stub decision_',
+  '',
+  '## 9 · Backlog',
+  '',
+  '_stub backlog_',
+  '',
+  '## 10 · Post-merge',
+  '',
+  '_stub post-merge_',
+].join('\n')
+
 function makeTask(
   overrides?: Partial<ReturnType<typeof makeTask>>,
 ): Parameters<typeof buildPrBody>[0]['task'] {
@@ -446,36 +498,36 @@ describe('buildPrBody', () => {
     gateDetails: [] as Parameters<typeof buildPrBody>[0]['gateDetails'],
   }
 
-  describe('hasTemplate: false — minimal fallback', () => {
+  describe('templateContent: null — minimal fallback', () => {
     it('contains Closes reference and summary', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
       expect(body).toContain('Closes #99')
       expect(body).toContain('## Summary')
       expect(body).toContain('Implements feature X')
     })
 
     it('lists acceptance criteria as checked items', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
       expect(body).toContain('- [x] X works')
       expect(body).toContain('- [x] Y is covered by tests')
     })
 
     it('includes audit footer with short SHA and cost', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
       expect(body).toContain('`abcdef12`')
       expect(body).toContain('$0.0123')
     })
 
     it('does not include template section headers', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      const body = buildPrBody({ ...baseArgs, templateContent: null })
       expect(body).not.toContain('## 1 ·')
       expect(body).not.toContain('## 4 ·')
     })
   })
 
-  describe('hasTemplate: true — 10-section template-aligned body', () => {
-    it('includes all 10 section headers', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+  describe('templateContent: string — dynamic template parsing', () => {
+    it('preserves all section headers from the template', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       for (const sec of [
         '## 1 ·',
         '## 2 ·',
@@ -493,64 +545,81 @@ describe('buildPrBody', () => {
       }
     })
 
-    it('section 1 (TL;DR) contains the issue ref', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+    it('section 1 (TL;DR) is filled with issue ref — not template stub', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).toContain('closes #99')
       expect(body).toContain('gh-99')
+      expect(body).not.toContain('_stub: one-liner_')
     })
 
-    it('section 4 (Evidence) lists audit run IDs and gate details', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+    it('human sections preserve the template stub text unchanged', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
+      expect(body).toContain('- **Reach** — _stub reach_') // §3 preserved
+      expect(body).toContain('- **Ran** — _stub security_') // §3b preserved
+      expect(body).toContain('_stub diff_') // §5 preserved
+      expect(body).toContain('_stub decision_') // §8 preserved
+    })
+
+    it('a new section added to the template passes through verbatim', () => {
+      const extendedTemplate = `${FAKE_TEMPLATE}\n## 11 · Performance\n\n_stub perf_\n`
+      const body = buildPrBody({ ...baseArgs, templateContent: extendedTemplate })
+      expect(body).toContain('## 11 · Performance')
+      expect(body).toContain('_stub perf_')
+    })
+
+    it('section 4 (Evidence) lists audit run IDs and gate status', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).toContain('run-1, run-2')
       expect(body).toContain('no configured checks run')
+      expect(body).not.toContain('_stub: fill me in_') // stub replaced
     })
 
     it('section 4 with gateDetails shows check results', () => {
-      const withGate = {
+      const body = buildPrBody({
         ...baseArgs,
         gateDetails: [
           { check: 'tsc', command: 'pnpm typecheck', result: 'pass' as const, exitCode: 0 },
           { check: 'lint', command: 'pnpm lint', result: 'pass' as const, exitCode: 0 },
         ],
-        hasTemplate: true,
-      }
-      const body = buildPrBody(withGate)
+        templateContent: FAKE_TEMPLATE,
+      })
       expect(body).toContain('tsc pass')
       expect(body).toContain('lint pass')
     })
 
-    it('section 4 acceptance criteria are checked', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+    it('section 4 acceptance criteria are indented checked items', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).toContain('  - [x] X works')
       expect(body).toContain('  - [x] Y is covered by tests')
     })
 
     it('section 6 includes branch, short SHA, retries, and cost', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).toContain('`feature/gh-99`')
       expect(body).toContain('`abcdef12`')
       expect(body).toContain('retries: 1')
       expect(body).toContain('$0.0123')
+      expect(body).not.toContain('_stub audit_') // stub replaced
     })
 
-    it('section 7 governance checklist has unchecked items', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+    it('section 7 governance checklist replaces stub with unchecked items', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).toContain('- [ ] PR-only, squash')
       expect(body).toContain('- [ ] No open P0/P1')
+      expect(body).not.toContain('_stub governance_') // stub replaced
     })
 
     it('truncates TL;DR to 280 chars with ellipsis for long descriptions', () => {
-      const longDesc = 'A'.repeat(400)
       const body = buildPrBody({
         ...baseArgs,
-        task: makeTask({ description: longDesc }),
-        hasTemplate: true,
+        task: makeTask({ description: 'A'.repeat(400) }),
+        templateContent: FAKE_TEMPLATE,
       })
       expect(body).toContain('...')
     })
 
-    it('does not truncate TL;DR for short descriptions', () => {
-      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+    it('does not truncate short descriptions', () => {
+      const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).not.toContain('...')
     })
   })
