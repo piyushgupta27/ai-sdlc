@@ -431,12 +431,17 @@ describe('ClaudeCodeCliTransport progress watchdog (#125)', () => {
     const child = makeFakeChild()
     vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
     const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
-    // emit Read tool calls — non-mutating, should NOT reset progress timer
-    const readEvent = JSON.stringify({
+    // Emit a complete Read round-trip (open + close) — non-mutating, openToolCalls
+    // returns to 0 so the timer fires normally when noProgressSec elapses.
+    const readOpen = JSON.stringify({
       type: 'assistant',
       message: { content: [{ type: 'tool_use', name: 'Read' }] },
     })
-    child.stdout.emit('data', Buffer.from(`${readEvent}\n`))
+    const readClose = JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${readOpen}\n${readClose}\n`))
     await vi.advanceTimersByTimeAsync(30_000) // noProgressSec elapses with no Write/Edit/Bash
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     child.emit('close', null)
@@ -462,6 +467,45 @@ describe('ClaudeCodeCliTransport progress watchdog (#125)', () => {
     expect(child.kill).not.toHaveBeenCalled() // progress timer reset, no stall yet
     child.emit('close', 0)
     await p
+  })
+
+  it('tool in flight (openToolCalls > 0) defers the stall kill until the tool closes', async () => {
+    // Regression guard for the openToolCalls guard in armNoProgress:
+    // a Bash tool running `pnpm test` keeps openToolCalls=1 silently for minutes.
+    // The progress timer must re-arm (not kill) while the tool is open, then fire
+    // once the tool closes and no new mutating tool appears.
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH_WITH_PROGRESS)
+
+    // t=5s: Bash tool_use opens (openToolCalls=1, progress timer resets to t=35s)
+    await vi.advanceTimersByTimeAsync(5_000)
+    const bashOpen = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Bash' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${bashOpen}\n`))
+
+    // t=35s: progress timer fires → openToolCalls=1 → re-arms to t=65s; no kill yet
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(child.kill).not.toHaveBeenCalled()
+
+    // t=50s: tool_result closes the Bash call (openToolCalls=0)
+    await vi.advanceTimersByTimeAsync(15_000)
+    const bashClose = JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result' }] },
+    })
+    child.stdout.emit('data', Buffer.from(`${bashClose}\n`))
+
+    // t=65s: re-armed timer fires; openToolCalls=0, no new mutating tool → stall kill
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
+    const r = await p
+    expect(r.ok).toBe(false)
+    if (r.ok || !isSubagentTimeoutCause(r.error.cause)) return
+    expect(r.error.cause.reason).toBe('stalled')
   })
 
   it('watchdog is disabled when noProgressSec is not passed', async () => {

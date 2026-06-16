@@ -328,7 +328,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
           }
         }
       }
-      const killChild = (reason: 'idle' | 'ceiling') => {
+      const killChild = (reason: 'idle' | 'ceiling' | 'stalled') => {
         if (killReason) return // already terminating — don't overwrite or re-signal
         killReason = reason
         signalGroup('SIGTERM')
@@ -374,6 +374,14 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         clearTimeout(noProgressTimer)
         noProgressTimer = setTimeout(() => {
           if (killReason) return
+          // Mirror armIdle: a tool currently in flight (e.g. `pnpm test` via Bash)
+          // makes the agent legitimately silent — the progress window started BEFORE
+          // the tool fired, so it expiring mid-tool is a false alarm. Re-arm and
+          // wait; the ceiling bounds a hung tool (#45).
+          if (openToolCalls > 0) {
+            armNoProgress()
+            return
+          }
           killChild('stalled')
         }, noProgressSec * 1000)
       }
