@@ -35,6 +35,11 @@ import {
   reworkRateGate,
 } from '../../orchestrator/pacing.js'
 import { projectDir, readState } from '../../orchestrator/state.js'
+import {
+  type ValidationCommands,
+  hasDeterministicFailure,
+  runValidations,
+} from '../../orchestrator/validations.js'
 import { provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { type ProjectSlug, type Task, type Tier, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
@@ -335,6 +340,7 @@ async function dispatchFromBoard(
             issueNumber: next.content.number,
             branch: outcome.branch,
             commitSha: outcome.commitSha,
+            validationCommands: cfg.validationCommands,
           })
           if (prOk) {
             await moveItem(project.value, next.id, 'Done')
@@ -411,15 +417,24 @@ async function dispatchWebhookLoop(
 interface MinimalConfig {
   readonly repoPath: string
   readonly owner: string
+  readonly validationCommands?: ValidationCommands
 }
 
 async function readConfig(slug: ProjectSlug): Promise<MinimalConfig | null> {
   const cfgPath = join(projectDir(slug), 'config.json')
   if (!existsSync(cfgPath)) return null
   const raw = await readFile(cfgPath, 'utf8')
-  const cfg = JSON.parse(raw) as { repoPath?: string; owner?: string }
+  const cfg = JSON.parse(raw) as {
+    repoPath?: string
+    owner?: string
+    validationCommands?: ValidationCommands
+  }
   if (!cfg.repoPath || !cfg.owner) return null
-  return { repoPath: cfg.repoPath, owner: cfg.owner }
+  return {
+    repoPath: cfg.repoPath,
+    owner: cfg.owner,
+    ...(cfg.validationCommands ? { validationCommands: cfg.validationCommands } : {}),
+  }
 }
 
 function projectItemToTask(slug: ProjectSlug, item: ProjectItem): Task {
@@ -536,7 +551,28 @@ async function maybeCreatePr(args: {
   readonly issueNumber: number
   readonly branch: string
   readonly commitSha: string
+  readonly validationCommands?: ValidationCommands
 }): Promise<boolean> {
+  // Pre-PR gate (#112): re-run the project's own checks in the worktree before
+  // pushing. This is a hard block regardless of tier or trust — a PR with red CI
+  // defeats the purpose of autonomous dispatch. Projects without validationCommands
+  // configured skip this gate (no commands → no assertions).
+  if (args.validationCommands) {
+    process.stdout.write('  ▸ Pre-PR validation (typecheck/lint/test)...\n')
+    const { validations } = await runValidations(args.repoPath, args.validationCommands)
+    if (hasDeterministicFailure(validations)) {
+      const failing = Object.entries(validations)
+        .filter(([, v]) => v === 'fail')
+        .map(([k]) => k)
+        .join(', ')
+      process.stderr.write(
+        `  ❌ Pre-PR gate: ${failing} failed in worktree — not pushing. Fix the failures and redispatch.\n`,
+      )
+      return false
+    }
+    process.stdout.write('  ✓ Pre-PR validations green\n')
+  }
+
   process.stdout.write(`  ▸ Pushing ${args.branch}...\n`)
   const push = await runShell('git', ['push', '-u', 'origin', args.branch], args.repoPath)
   if (push.code !== 0) {

@@ -45,6 +45,10 @@ vi.mock('../../orchestrator/budget.js', () => ({
 vi.mock('../../orchestrator/index.js', () => ({
   runTask: vi.fn(),
 }))
+vi.mock('../../orchestrator/validations.js', () => ({
+  runValidations: vi.fn(),
+  hasDeterministicFailure: vi.fn(),
+}))
 vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
 }))
@@ -63,6 +67,7 @@ import { findProject, listItems, moveItem } from '../../integrations/github-proj
 import { budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
 import { listProjects, projectDir, readState } from '../../orchestrator/state.js'
+import { hasDeterministicFailure, runValidations } from '../../orchestrator/validations.js'
 import { provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { runDispatch } from './dispatch.js'
 
@@ -150,6 +155,10 @@ beforeEach(() => {
   )
 
   vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+
+  // Pre-PR validation gate (#112): default green (no commands → gate skipped).
+  vi.mocked(runValidations).mockResolvedValue({ validations: {}, details: [] })
+  vi.mocked(hasDeterministicFailure).mockReturnValue(false)
 
   // Each spawn() call gets a fresh emitter — reusing one EventEmitter across
   // calls means the second call never sees the `close` event.
@@ -296,6 +305,68 @@ describe('dispatchFromBoard — Done/Blocked deferral (Bug 2: PR-create gates Do
     expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
     expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
     expect(spawnMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─── Suite 3 (gh-112): pre-PR validation gate ────────────────────────────────
+
+describe('dispatchFromBoard — pre-PR validation gate (#112)', () => {
+  // Config with validationCommands declared — activates the gate.
+  const CFG_WITH_VALIDATION = JSON.stringify({
+    repoPath: '/fake/repo',
+    owner: 'fakeowner',
+    validationCommands: { typecheck: 'pnpm run typecheck', lint: 'pnpm run lint' },
+  })
+
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('blocks PR and moves card to Blocked when validations are red', async () => {
+    readFileMock.mockResolvedValue(CFG_WITH_VALIDATION)
+    vi.mocked(runValidations).mockResolvedValue({
+      validations: { tsc: 'fail', lint: 'pass' },
+      details: [],
+    })
+    vi.mocked(hasDeterministicFailure).mockReturnValue(true)
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(1)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    // Must NOT push to remote when validations are red
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('opens PR normally when validationCommands are configured and all green', async () => {
+    readFileMock.mockResolvedValue(CFG_WITH_VALIDATION)
+    vi.mocked(runValidations).mockResolvedValue({
+      validations: { tsc: 'pass', lint: 'pass' },
+      details: [],
+    })
+    vi.mocked(hasDeterministicFailure).mockReturnValue(false)
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(runValidations)).toHaveBeenCalledWith(
+      '/tmp/fake-sandbox',
+      expect.objectContaining({ typecheck: 'pnpm run typecheck' }),
+    )
+  })
+
+  it('skips the gate and opens PR when no validationCommands are configured', async () => {
+    // Default readFileMock returns config without validationCommands
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(runValidations)).not.toHaveBeenCalled()
   })
 })
 
