@@ -69,7 +69,7 @@ import { runTask } from '../../orchestrator/index.js'
 import { listProjects, projectDir, readState } from '../../orchestrator/state.js'
 import { hasDeterministicFailure, runValidations } from '../../orchestrator/validations.js'
 import { provisionWorktreeSandbox } from '../../sandbox/index.js'
-import { runDispatch } from './dispatch.js'
+import { buildPrBody, runDispatch } from './dispatch.js'
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -397,5 +397,161 @@ describe('runDispatch --webhook fail-closed (gh-12)', () => {
     vi.stubEnv('SDLC_NTFY_TOKEN', 'tok')
     const code = await runDispatch(['--project', 'test-proj', '--webhook'])
     expect(code).toBe(2)
+  })
+})
+
+// ─── Suite 4: buildPrBody unit tests ─────────────────────────────────────────
+
+function makeTask(
+  overrides?: Partial<ReturnType<typeof makeTask>>,
+): Parameters<typeof buildPrBody>[0]['task'] {
+  const now = new Date().toISOString()
+  return {
+    project: asProjectSlug('testproject'),
+    id: 'gh-99',
+    storyId: 'gh-99',
+    epicId: 'gh-99',
+    title: 'Add feature X',
+    description: 'Implements feature X as described in the spec.',
+    tier: 2,
+    dod: {
+      acceptanceCriteria: ['X works', 'Y is covered by tests'],
+      nfr: [],
+      testsRequired: ['unit'],
+      coverageFloor: 70,
+      contextUpdates: [],
+      requiresAdr: false,
+    },
+    estimatedCostUsd: 0.5,
+    dependsOn: [],
+    blocks: [],
+    expectedFiles: [],
+    stage: 'PLAN' as const,
+    status: 'planned' as const,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  }
+}
+
+describe('buildPrBody', () => {
+  const baseArgs = {
+    task: makeTask(),
+    issueNumber: 99,
+    branch: 'feature/gh-99',
+    commitSha: 'abcdef1234567890',
+    auditRunIds: ['run-1', 'run-2'],
+    costUsd: 0.0123,
+    retriesUsed: 1,
+    gateDetails: [] as Parameters<typeof buildPrBody>[0]['gateDetails'],
+  }
+
+  describe('hasTemplate: false — minimal fallback', () => {
+    it('contains Closes reference and summary', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      expect(body).toContain('Closes #99')
+      expect(body).toContain('## Summary')
+      expect(body).toContain('Implements feature X')
+    })
+
+    it('lists acceptance criteria as checked items', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      expect(body).toContain('- [x] X works')
+      expect(body).toContain('- [x] Y is covered by tests')
+    })
+
+    it('includes audit footer with short SHA and cost', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      expect(body).toContain('`abcdef12`')
+      expect(body).toContain('$0.0123')
+    })
+
+    it('does not include template section headers', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: false })
+      expect(body).not.toContain('## 1 ·')
+      expect(body).not.toContain('## 4 ·')
+    })
+  })
+
+  describe('hasTemplate: true — 10-section template-aligned body', () => {
+    it('includes all 10 section headers', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      for (const sec of [
+        '## 1 ·',
+        '## 2 ·',
+        '## 3 ·',
+        '## 3b ·',
+        '## 4 ·',
+        '## 5 ·',
+        '## 6 ·',
+        '## 7 ·',
+        '## 8 ·',
+        '## 9 ·',
+        '## 10 ·',
+      ]) {
+        expect(body).toContain(sec)
+      }
+    })
+
+    it('section 1 (TL;DR) contains the issue ref', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      expect(body).toContain('closes #99')
+      expect(body).toContain('gh-99')
+    })
+
+    it('section 4 (Evidence) lists audit run IDs and gate details', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      expect(body).toContain('run-1, run-2')
+      expect(body).toContain('no configured checks run')
+    })
+
+    it('section 4 with gateDetails shows check results', () => {
+      const withGate = {
+        ...baseArgs,
+        gateDetails: [
+          { check: 'tsc', command: 'pnpm typecheck', result: 'pass' as const, exitCode: 0 },
+          { check: 'lint', command: 'pnpm lint', result: 'pass' as const, exitCode: 0 },
+        ],
+        hasTemplate: true,
+      }
+      const body = buildPrBody(withGate)
+      expect(body).toContain('tsc pass')
+      expect(body).toContain('lint pass')
+    })
+
+    it('section 4 acceptance criteria are checked', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      expect(body).toContain('  - [x] X works')
+      expect(body).toContain('  - [x] Y is covered by tests')
+    })
+
+    it('section 6 includes branch, short SHA, retries, and cost', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      expect(body).toContain('`feature/gh-99`')
+      expect(body).toContain('`abcdef12`')
+      expect(body).toContain('retries: 1')
+      expect(body).toContain('$0.0123')
+    })
+
+    it('section 7 governance checklist has unchecked items', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      expect(body).toContain('- [ ] PR-only, squash')
+      expect(body).toContain('- [ ] No open P0/P1')
+    })
+
+    it('truncates TL;DR to 280 chars with ellipsis for long descriptions', () => {
+      const longDesc = 'A'.repeat(400)
+      const body = buildPrBody({
+        ...baseArgs,
+        task: makeTask({ description: longDesc }),
+        hasTemplate: true,
+      })
+      expect(body).toContain('...')
+    })
+
+    it('does not truncate TL;DR for short descriptions', () => {
+      const body = buildPrBody({ ...baseArgs, hasTemplate: true })
+      expect(body).not.toContain('...')
+    })
   })
 })
