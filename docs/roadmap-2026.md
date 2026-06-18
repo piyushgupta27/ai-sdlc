@@ -221,12 +221,13 @@
 ## Execution Checklist
 
 Pre-execution (not yet done):
-- [ ] Commit + push `docs/boulders.md`, `docs/roadmap-2026.md`, `docs/reviews/2026-06-16-*.md` — so GitHub issue body links resolve
-- [ ] Create 7 milestones (July 2026 → Q1 2027)
+- [x] Commit + push `docs/boulders.md`, `docs/roadmap-2026.md` — committed d30b449 2026-06-18; research reviews moved to vault
+- [x] Create 7 milestones (July 2026 → Q1 2027) — milestones #1–#7 created 2026-06-18
 
 GitHub operations:
-- [ ] Create 11 new issues (marked above under each milestone)
-- [ ] Update ~55 existing issues: set milestone + label corrections
+- [x] Create 11 new issues (#133–#143) — created 2026-06-18
+- [x] Create 3 IMP issues (#144 IMP-28, #145 IMP-33, #146 IMP-34) — created 2026-06-18
+- [x] Update 65 existing issues: milestone assignments + label corrections — completed 2026-06-18
 
 ---
 
