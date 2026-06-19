@@ -51,8 +51,9 @@ test-results/
 .last-pull
 .feature-prompted-*
 
-# Local working log — lives in the private vault, never in this public repo (#108)
+# Local working log + session config — live in the private vault, never in this public repo (#108)
 CONTINUATION.md
+.continuation-doc-path
 
 # VS Code workspace files (local, multi-root)
 *.code-workspace

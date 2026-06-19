@@ -3,29 +3,35 @@ name: blast-radius
 on:
   pull_request:
     branches: [main]
-    # Include labeled/unlabeled so applying the `manager-approved` sign-off
-    # re-runs this gate (default types don't fire on label changes).
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
-  pull-requests: read
 
 # Layer 3 of three-layer enforcement.
 #
 # Logic:
 #   1. List files changed in this PR (vs base branch)
 #   2. Run tools/check-blast-radius.sh against each one
-#   3. If any file is in Red zone, the script exits 1 → workflow fails
-#   4. Red zone PRs additionally require the `manager-approved` label — the
-#      MANAGER's explicit sign-off (the PR's tier:N label already records
-#      severity). Branch protection prevents unauthorized label edits.
+#   3. If any file is in Red zone, set touched_red_zone=true
+#   4. The require-manager-approval job gates on that output.
+#      It declares `environment: red-zone-gate`, which pauses execution
+#      and notifies @piyushgupta27 — only his Approve click in the GitHub
+#      UI resumes the job. No CLI command or label can substitute.
+#
+# Setup required (one-time, human):
+#   GitHub repo Settings → Environments → New environment → "red-zone-gate"
+#   Required reviewers: @piyushgupta27
+#
+# Branch protection (required status checks): add "require MANAGER approval"
+#   to the required checks list so red-zone PRs cannot merge until approved.
+#   Non-red-zone PRs skip this job (counted as success by GitHub).
 #
 # See ARCHITECTURE.md §7.1.3 for the spec.
 
 jobs:
   check:
-    name: red zone enforcement
+    name: red zone detection
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
@@ -40,10 +46,7 @@ jobs:
         id: detect
         run: |
           set -euo pipefail
-          # Without an approval token set, the script blocks any Red zone touch.
-          # If ANY changed file fails, the whole job fails.
           TOUCHED="false"
-          # Compare against the PR's base (e.g. origin/main).
           BASE_REF="${{ github.event.pull_request.base.ref }}"
           git fetch origin "$BASE_REF" --depth=1
           CHANGED=$(git diff --name-only "origin/$BASE_REF...HEAD")
@@ -58,7 +61,7 @@ jobs:
             # Skip deleted files (no path to check)
             [ -f "$f" ] || continue
             if ! ./tools/check-blast-radius.sh "$f"; then
-              echo "::warning file=$f::Red zone file touched without approval token (CI-side)"
+              echo "::warning file=$f::Red zone file touched — MANAGER approval required"
               TOUCHED="true"
             fi
           done
@@ -68,22 +71,19 @@ jobs:
           if [ "$TOUCHED" = "true" ]; then
             echo "::group::Red zone files detected"
             echo "One or more changed files are in Tier 0 / Tier 1 Red zone."
-            echo "This PR requires the 'manager-approved' label (the MANAGER's sign-off)."
+            echo "GitHub will pause the 'require MANAGER approval' job and notify @piyushgupta27."
+            echo "The MANAGER must click Approve in the GitHub UI to proceed."
             echo "::endgroup::"
           fi
 
-      - name: Require MANAGER approval label
-        if: steps.detect.outputs.touched_red_zone == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const labels = context.payload.pull_request.labels.map((l) => l.name)
-            if (!labels.includes('manager-approved')) {
-              core.setFailed(
-                "Red zone PR requires the 'manager-approved' label — the MANAGER's explicit sign-off. " +
-                "The PR's tier:N label already records severity; this label records that the MANAGER approved it. " +
-                'See https://github.com/piyushgupta27/ai-sdlc/blob/main/HITL.md'
-              )
-            } else {
-              core.info('Red zone approved via the `manager-approved` label.')
-            }
+  require-manager-approval:
+    name: require MANAGER approval
+    needs: check
+    if: needs.check.outputs.touched_red_zone == 'true'
+    runs-on: ubuntu-latest
+    environment: red-zone-gate
+    steps:
+      - name: Red zone approved by MANAGER
+        run: |
+          echo "MANAGER approved this red-zone PR via GitHub Environment gate."
+          echo "Approval is on record in the GitHub deployment history for this PR."
