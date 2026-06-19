@@ -1,23 +1,25 @@
 /**
  * `pnpm sdlc onboard --repo <path> --slug <name>` — add a new project.
  *
- * v1 scope (slim onboarding — per ROADMAP.md "v1 / v1.5+ scope split"):
+ * v1 scope:
  *   1. Verify repo exists at --repo
  *   2. Create projects/<slug>/config.json + state.json (initial state)
  *   3. Skeleton CLAUDE.md (Red zone = secrets + cookies only)
- *   4. Symlink the local vault's projects/active/<slug> → <repo> (if a vault exists)
- *   5. Write per-project config from defaults + CLI flags
+ *   4. Gitignore pipeline artifact dirs (.audit/, .sdlc-queue/)
+ *   5. Inject canonical ai-sdlc rule-block into CLAUDE.md
+ *   6. Scaffold blast-radius CI workflow (.github/workflows/blast-radius.yml)
+ *   7. Scaffold PR label enforcement workflow (.github/workflows/pr-labels.yml)
+ *   8. Scaffold PR template (.github/pull_request_template.md)
+ *   9. Seed canonical label taxonomy in the GitHub repo (via gh CLI)
  *
  * v1.5+ deliverables NOT in this onboard yet:
  *   - GitHub Project board creation via gh project create
- *   - .github/workflows/*.yml writes per consumer repo
  *   - CODEOWNERS auto-write
- *   - Label taxonomy creation via gh label create
- *
- * Those graduate when first real testbed onboards (trip-research, week 4).
- * For v1 they're documented in ONBOARDING.md but applied manually.
+ *   - Branch protection required-checks enforcement (needs #9 bot identity)
+ *   - sdlc doctor drift verification
  */
 
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -45,6 +47,76 @@ Examples:
   pnpm sdlc onboard --repo ~/Workspace/trip-research --slug trip-research
   pnpm sdlc onboard --repo ~/Workspace/piyush-portfolio --slug portfolio --visibility public
 `
+
+/**
+ * Canonical label taxonomy — every onboarded GitHub repo gets these via sdlc onboard.
+ * Exported for test coverage of the data shape.
+ */
+export const CANONICAL_LABELS = [
+  // Tier labels (blast radius)
+  {
+    name: 'tier:0',
+    color: 'B60205',
+    description: 'ALWAYS HITL — security, auth, cookies, rollback. Never auto-merged.',
+  },
+  {
+    name: 'tier:1',
+    color: 'D93F0B',
+    description: 'High blast radius — architecture, contracts, migrations, public APIs.',
+  },
+  { name: 'tier:2', color: 'FBCA04', description: 'Standard feature work — default tier.' },
+  {
+    name: 'tier:3',
+    color: '0E8A16',
+    description: 'Low-risk — bug fixes, refactors, internal-only.',
+  },
+  { name: 'tier:4', color: 'C5DEF5', description: 'Cosmetic — typos, docs, comments.' },
+  // Status labels
+  {
+    name: 'blocked',
+    color: 'D73A4A',
+    description: 'Companion to Status:Blocked — surfaces in default issue list.',
+  },
+  {
+    name: 'hitl-pending',
+    color: 'FBCA04',
+    description: 'A HITL gate fired and is awaiting your reply.',
+  },
+  // Type labels
+  { name: 'security', color: 'B60205', description: 'Security / runtime-safety work.' },
+  {
+    name: 'adhoc',
+    color: 'E4E669',
+    description: 'Unplanned item pulled in from dogfooding or production incident.',
+  },
+  { name: 'dogfood', color: '0075CA', description: 'Surfaced by dogfooding a testbed project.' },
+  // Phase labels (ai-sdlc milestone tracking)
+  {
+    name: 'phase:0-floor',
+    color: 'B60205',
+    description: 'Safety floor — must land before any unattended autonomy.',
+  },
+  {
+    name: 'phase:1-visibility',
+    color: 'D93F0B',
+    description: "Observability / KPIs — can't drive what you can't see.",
+  },
+  {
+    name: 'phase:2-demand',
+    color: 'FBCA04',
+    description: "Review-compression — buys back the human's day.",
+  },
+  {
+    name: 'phase:3-trust',
+    color: '0E8A16',
+    description: 'Earn trust with data — evals, cross-vendor, routing.',
+  },
+  {
+    name: 'phase:4-scale',
+    color: '1D76DB',
+    description: 'Scale — concurrency, durable exec, self-host.',
+  },
+] as const
 
 export async function runOnboard(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
@@ -109,6 +181,12 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     process.stdout.write(`Would write initial state to projects/${slug}/state.json.\n`)
     process.stdout.write(`Would create skeleton CLAUDE.md if not present in ${repo}.\n`)
     process.stdout.write(`Would ensure .audit/ + .sdlc-queue/ are gitignored in ${repo}.\n`)
+    process.stdout.write(
+      `Would scaffold blast-radius workflow, PR label check, and PR template in ${repo}.\n`,
+    )
+    process.stdout.write(
+      `Would seed ${CANONICAL_LABELS.length} canonical labels in ${owner}/${slug}.\n`,
+    )
     process.stdout.write('\n(Dry run — no changes made.)\n')
     return 0
   }
@@ -141,25 +219,35 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
   // 6. Force-write the canonical ai-sdlc rule-block into the target CLAUDE.md.
   await seedRules(repo)
 
-  // 7. Scaffold the platform blast-radius CI workflow into the target repo.
+  // 7. Scaffold blast-radius CI workflow (platform-owned; see ai-sdlc#83).
   await seedBlastRadiusWorkflow(repo)
+
+  // 8. Scaffold PR label enforcement workflow (.github/workflows/pr-labels.yml).
+  await seedPrLabelsWorkflow(repo)
+
+  // 9. Scaffold PR template (.github/pull_request_template.md).
+  await seedPullRequestTemplate(repo)
+
+  // 10. Seed canonical label taxonomy in the GitHub repo.
+  await seedLabelTaxonomy(owner, slug)
 
   process.stdout.write(`
 ✓ Onboarded ${slug}.
 
-Next steps (v1 manual; v1.5+ automates these):
+Next steps (still manual — needs #9 bot identity to automate):
   1. Edit ${claudeMdPath} to declare Red zone files (secrets, cookies, etc.)
   2. Create GitHub Project board for ${owner}/${slug}:
        gh project create --owner ${owner} --title "${slug} pipeline"
      Then add canonical columns: Ready, Building, QA, Review, Done, Blocked
   3. Run \`pnpm sdlc status --project ${slug}\` to verify state
 
-  ⚠  Blast-radius gate — two one-time steps required in GitHub:
+  ⚠  Two one-time steps required in GitHub:
      a. Settings → Environments → New environment: "red-zone-gate"
         Required reviewers: ${owner}
      b. Settings → Branches → Branch protection for main →
-        Required status checks → add "require MANAGER approval"
-        (the gate only runs when Red zone files are touched)
+        Required status checks → add:
+          • "require MANAGER approval"   (blast-radius; runs only on Red zone PRs)
+          • "tier label required"        (pr-labels; runs on every PR)
 
   Note: the pipeline opens PRs against \`main\` (we merge to main).
 `)
@@ -227,6 +315,100 @@ async function seedBlastRadiusWorkflow(repo: string): Promise<void> {
   await mkdir(workflowDir, { recursive: true })
   await writeFile(dest, template, 'utf8')
   process.stdout.write(`✓ Wrote blast-radius CI workflow to ${dest}\n`)
+}
+
+/**
+ * Scaffold the PR label enforcement workflow into the target repo.
+ * Fails any PR that has no tier:* label — enforces that every PR is classified.
+ * Idempotent: skips if the file already exists.
+ */
+async function seedPrLabelsWorkflow(repo: string): Promise<void> {
+  const workflowDir = join(repo, '.github', 'workflows')
+  const dest = join(workflowDir, 'pr-labels.yml')
+  if (existsSync(dest)) {
+    process.stdout.write('(.github/workflows/pr-labels.yml exists — left as-is)\n')
+    return
+  }
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'pr-labels-consumer.yml')
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(workflowDir, { recursive: true })
+  await writeFile(dest, template, 'utf8')
+  process.stdout.write(`✓ Wrote PR label enforcement workflow to ${dest}\n`)
+}
+
+/**
+ * Copy the canonical PR template into the target repo's .github/ directory.
+ * Idempotent: skips if the file already exists.
+ */
+async function seedPullRequestTemplate(repo: string): Promise<void> {
+  const dest = join(repo, '.github', 'pull_request_template.md')
+  if (existsSync(dest)) {
+    process.stdout.write('(.github/pull_request_template.md exists — left as-is)\n')
+    return
+  }
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'pull-request.md')
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(join(repo, '.github'), { recursive: true })
+  await writeFile(dest, template, 'utf8')
+  process.stdout.write(`✓ Wrote PR template to ${dest}\n`)
+}
+
+/**
+ * Seed the canonical label taxonomy in the target GitHub repo (idempotent).
+ * Uses the gh CLI — requires the user to be authenticated. Skips gracefully
+ * if gh is unavailable or the repo doesn't exist on GitHub yet.
+ */
+async function seedLabelTaxonomy(owner: string, slug: string): Promise<void> {
+  const repoRef = `${owner}/${slug}`
+
+  // Fetch existing label names
+  const listResult = spawnSync(
+    'gh',
+    ['label', 'list', '--repo', repoRef, '--limit', '100', '--json', 'name'],
+    { encoding: 'utf8' },
+  )
+  if (listResult.status !== 0) {
+    process.stdout.write(
+      `⚠  Label taxonomy: could not list labels for ${repoRef} — skipping (gh error or repo not on GitHub yet)\n`,
+    )
+    return
+  }
+
+  const existing = new Set<string>(
+    (JSON.parse(listResult.stdout) as Array<{ name: string }>).map((l) => l.name),
+  )
+  const missing = CANONICAL_LABELS.filter((l) => !existing.has(l.name))
+
+  if (missing.length === 0) {
+    process.stdout.write('(label taxonomy already current)\n')
+    return
+  }
+
+  let created = 0
+  for (const label of missing) {
+    const r = spawnSync(
+      'gh',
+      [
+        'label',
+        'create',
+        label.name,
+        '--repo',
+        repoRef,
+        '--color',
+        label.color,
+        '--description',
+        label.description,
+      ],
+      { encoding: 'utf8' },
+    )
+    if (r.status === 0) {
+      created++
+    } else {
+      process.stdout.write(`  ⚠ label "${label.name}": ${(r.stderr ?? '').trim()}\n`)
+    }
+  }
+
+  process.stdout.write(`✓ Created ${created}/${missing.length} missing labels in ${repoRef}\n`)
 }
 
 function skeletonClaudeMd(slug: string, owner: string): string {
