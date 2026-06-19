@@ -1,0 +1,42 @@
+name: pr-labels
+
+# Scaffolded by: pnpm sdlc onboard
+# Source: piyushgupta27/ai-sdlc meta/templates/pr-labels-consumer.yml
+#
+# Requires every PR to carry at least one tier:* label before it can be merged.
+# Labels are seeded at onboard time (sdlc onboard --repo <path> --slug <name>).
+#
+# Setup (one-time, human):
+#   Branch protection → Required status checks → add "tier label required"
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: tier label required
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify tier label is present
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          echo "PR labels: $LABELS"
+
+          # Check for at least one tier:* label
+          if echo "$LABELS" | grep -q '"tier:'; then
+            echo "✓ tier label found — OK"
+            exit 0
+          fi
+
+          echo "::error::PR is missing a tier label (tier:0 / tier:1 / tier:2 / tier:3 / tier:4)."
+          echo "::error::Add the appropriate tier label before merging."
+          exit 1

@@ -8,8 +8,9 @@
  *   4. Gitignore pipeline artifact dirs (.audit/, .sdlc-queue/)
  *   5. Inject canonical ai-sdlc rule-block into CLAUDE.md
  *   6. Scaffold blast-radius CI workflow (.github/workflows/blast-radius.yml)
- *   7. Scaffold PR template (.github/pull_request_template.md)
- *   8. Seed canonical label taxonomy in the GitHub repo (via gh CLI)
+ *   7. Scaffold PR label enforcement workflow (.github/workflows/pr-labels.yml)
+ *   8. Scaffold PR template (.github/pull_request_template.md)
+ *   9. Seed canonical label taxonomy in the GitHub repo (via gh CLI)
  *
  * v1.5+ deliverables NOT in this onboard yet:
  *   - GitHub Project board creation via gh project create
@@ -180,7 +181,9 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     process.stdout.write(`Would write initial state to projects/${slug}/state.json.\n`)
     process.stdout.write(`Would create skeleton CLAUDE.md if not present in ${repo}.\n`)
     process.stdout.write(`Would ensure .audit/ + .sdlc-queue/ are gitignored in ${repo}.\n`)
-    process.stdout.write(`Would scaffold blast-radius workflow + PR template in ${repo}.\n`)
+    process.stdout.write(
+      `Would scaffold blast-radius workflow, PR label check, and PR template in ${repo}.\n`,
+    )
     process.stdout.write(
       `Would seed ${CANONICAL_LABELS.length} canonical labels in ${owner}/${slug}.\n`,
     )
@@ -219,10 +222,13 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
   // 7. Scaffold blast-radius CI workflow (platform-owned; see ai-sdlc#83).
   await seedBlastRadiusWorkflow(repo)
 
-  // 8. Scaffold PR template (.github/pull_request_template.md).
+  // 8. Scaffold PR label enforcement workflow (.github/workflows/pr-labels.yml).
+  await seedPrLabelsWorkflow(repo)
+
+  // 9. Scaffold PR template (.github/pull_request_template.md).
   await seedPullRequestTemplate(repo)
 
-  // 9. Seed canonical label taxonomy in the GitHub repo.
+  // 10. Seed canonical label taxonomy in the GitHub repo.
   await seedLabelTaxonomy(owner, slug)
 
   process.stdout.write(`
@@ -235,12 +241,13 @@ Next steps (still manual — needs #9 bot identity to automate):
      Then add canonical columns: Ready, Building, QA, Review, Done, Blocked
   3. Run \`pnpm sdlc status --project ${slug}\` to verify state
 
-  ⚠  Blast-radius gate — two one-time steps required in GitHub:
+  ⚠  Two one-time steps required in GitHub:
      a. Settings → Environments → New environment: "red-zone-gate"
         Required reviewers: ${owner}
      b. Settings → Branches → Branch protection for main →
-        Required status checks → add "require MANAGER approval"
-        (the gate only runs when Red zone files are touched)
+        Required status checks → add:
+          • "require MANAGER approval"   (blast-radius; runs only on Red zone PRs)
+          • "tier label required"        (pr-labels; runs on every PR)
 
   Note: the pipeline opens PRs against \`main\` (we merge to main).
 `)
@@ -308,6 +315,25 @@ async function seedBlastRadiusWorkflow(repo: string): Promise<void> {
   await mkdir(workflowDir, { recursive: true })
   await writeFile(dest, template, 'utf8')
   process.stdout.write(`✓ Wrote blast-radius CI workflow to ${dest}\n`)
+}
+
+/**
+ * Scaffold the PR label enforcement workflow into the target repo.
+ * Fails any PR that has no tier:* label — enforces that every PR is classified.
+ * Idempotent: skips if the file already exists.
+ */
+async function seedPrLabelsWorkflow(repo: string): Promise<void> {
+  const workflowDir = join(repo, '.github', 'workflows')
+  const dest = join(workflowDir, 'pr-labels.yml')
+  if (existsSync(dest)) {
+    process.stdout.write('(.github/workflows/pr-labels.yml exists — left as-is)\n')
+    return
+  }
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'pr-labels-consumer.yml')
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(workflowDir, { recursive: true })
+  await writeFile(dest, template, 'utf8')
+  process.stdout.write(`✓ Wrote PR label enforcement workflow to ${dest}\n`)
 }
 
 /**
