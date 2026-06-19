@@ -54,7 +54,7 @@ import {
 } from '../types/index.js'
 import { writeAuditRow } from './audit-log.js'
 import { buildG2Request, buildG4Request, enqueue } from './hitl-queue.js'
-import { shouldRefire, shouldRetry } from './retry-policy.js'
+import { shouldRefire, shouldRetry, shouldRetryOnTimeout } from './retry-policy.js'
 import { projectDir } from './state.js'
 import { readState, updateState } from './state.js'
 import { requiresCommitHitl, trustGateReason } from './trust-gate.js'
@@ -133,11 +133,18 @@ export async function runTask(opts: {
   const validationCommands = await loadValidationCommands(opts.project)
 
   // ─── Iteration loop ──────────────────────────────────────────────────────
+  // Timeout retries are tracked per-stage, independently of the code-quality
+  // retry counter (retriesUsed). They represent infra failures (hung process,
+  // read-loop), not correctness failures, and are bounded by MAX_TIMEOUT_RETRIES_V1.
+  let buildTimeoutsUsed = 0
+  let testTimeoutsUsed = 0
+
   while (retriesUsed <= 3) {
     const isRetry = retriesUsed > 0
 
-    // 1) BUILD
-    const buildResult = await runBuilder(
+    // 1) BUILD — with per-stage timeout retry loop (#148)
+    let buildNudge: string | undefined
+    let buildResult = await runBuilder(
       {
         project: opts.project,
         taskId: opts.task.id,
@@ -155,6 +162,42 @@ export async function runTask(opts: {
       { isRetry },
     )
 
+    // #148: cold-retry on idle/stalled kills (ceiling → BLOCKED; code-failure → outer loop)
+    while (!buildResult.ok) {
+      const toCause = isSubagentTimeoutCause(buildResult.error.cause) ? buildResult.error.cause : null
+      if (!toCause) break
+      const toDecision = shouldRetryOnTimeout(toCause.reason, buildTimeoutsUsed)
+      if (toDecision.action !== 'retry') break
+      totalCost += toCause.recoveredCostUsd
+      buildTimeoutsUsed++
+      buildNudge =
+        toCause.reason === 'stalled'
+          ? 'Your previous attempt read without writing and was killed. Stop reading; commit your minimal viable change now.'
+          : undefined
+      // Discard partial worktree state so the retry starts clean (#148 note: this
+      // intentionally inverts #107's preserve-intent for the retry case — partial
+      // state from a frozen agent is more likely to confuse than help).
+      await resetWorktreeToHead(opts.targetRepo)
+      buildResult = await runBuilder(
+        {
+          project: opts.project,
+          taskId: opts.task.id,
+          targetRepo: opts.targetRepo,
+          payload: {
+            taskId: opts.task.id,
+            taskDescription: opts.task.description,
+            acceptanceCriteria: opts.task.dod.acceptanceCriteria,
+            tier,
+            branch: opts.branch,
+            ...(validationCommands ? { validationCommands } : {}),
+            ...(isRetry ? { reviewerFeedback: 'See previous REVIEWER comments' } : {}),
+            ...(buildNudge ? { timeoutNudge: buildNudge } : {}),
+          },
+        },
+        { isRetry },
+      )
+    }
+
     if (!buildResult.ok) {
       return await finalizeFailure(
         opts,
@@ -163,6 +206,7 @@ export async function runTask(opts: {
         totalCost,
         start,
         retriesUsed,
+        buildTimeoutsUsed + testTimeoutsUsed,
       )
     }
 
@@ -197,7 +241,9 @@ export async function runTask(opts: {
       linesRemoved: number
     }
 
-    const testResult = await runTester(
+    // 2) TEST — with per-stage timeout retry loop (#148)
+    let testNudge: string | undefined
+    let testResult = await runTester(
       {
         project: opts.project,
         taskId: opts.task.id,
@@ -213,6 +259,36 @@ export async function runTask(opts: {
       { tier, isRetry },
     )
 
+    while (!testResult.ok) {
+      const toCause = isSubagentTimeoutCause(testResult.error.cause) ? testResult.error.cause : null
+      if (!toCause) break
+      const toDecision = shouldRetryOnTimeout(toCause.reason, testTimeoutsUsed)
+      if (toDecision.action !== 'retry') break
+      totalCost += toCause.recoveredCostUsd
+      testTimeoutsUsed++
+      testNudge =
+        toCause.reason === 'stalled'
+          ? 'Your previous attempt read without writing and was killed. Write your tests and commit immediately.'
+          : undefined
+      await resetWorktreeToHead(opts.targetRepo)
+      testResult = await runTester(
+        {
+          project: opts.project,
+          taskId: opts.task.id,
+          targetRepo: opts.targetRepo,
+          payload: {
+            taskId: opts.task.id,
+            commitSha: buildOutput.commitSha,
+            acceptanceCriteria: opts.task.dod.acceptanceCriteria,
+            coverageFloor: opts.task.dod.coverageFloor,
+            ...(validationCommands ? { validationCommands } : {}),
+            ...(testNudge ? { timeoutNudge: testNudge } : {}),
+          },
+        },
+        { tier, isRetry },
+      )
+    }
+
     if (!testResult.ok) {
       return await finalizeFailure(
         opts,
@@ -221,6 +297,7 @@ export async function runTask(opts: {
         totalCost,
         start,
         retriesUsed,
+        buildTimeoutsUsed + testTimeoutsUsed,
       )
     }
 
@@ -997,6 +1074,7 @@ async function finalizeFailure(
   totalCost: number,
   startTime: number,
   retriesUsed: number,
+  timeoutsUsed = 0,
 ): Promise<Result<TaskRunOutcome, AppError>> {
   await updateState(opts.project, (s) => ({
     ...s,
@@ -1029,12 +1107,50 @@ async function finalizeFailure(
     durationMs: performance.now() - startTime,
     notes: `Agent error: ${error.code} — ${error.message}${
       timeoutCause ? '; rescue commit attempted in worktree' : ''
-    }`,
+    }${timeoutsUsed > 0 ? `; timeout retries attempted: ${timeoutsUsed}` : ''}`,
   })
 }
 
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+/**
+ * Reset the isolated worktree to HEAD before a timeout retry (#148).
+ *
+ * Discards both tracked-file changes (`reset --hard`) and untracked files
+ * (`clean -fd`) so the retry agent starts from a clean state. This intentionally
+ * inverts #107's preserve-intent for the retry case: partial state from a frozen
+ * agent is more likely to confuse the retry than help it.
+ *
+ * Safe only because `targetRepo` is the task's isolated git worktree provisioned
+ * by `provisionWorktreeSandbox` — never the shared repo checkout.
+ */
+export async function resetWorktreeToHead(targetRepo: string): Promise<void> {
+  try {
+    const reset = spawnSync('git', ['-C', targetRepo, 'reset', '--hard', 'HEAD'], {
+      encoding: 'utf8',
+    })
+    if (reset.status !== 0) {
+      process.stderr.write(
+        `(worktree reset: git reset failed in ${targetRepo}, skipping): ${reset.stderr ?? ''}\n`,
+      )
+      return
+    }
+    // Remove untracked files/dirs so the retry agent doesn't see partial writes.
+    const clean = spawnSync('git', ['-C', targetRepo, 'clean', '-fd'], { encoding: 'utf8' })
+    if (clean.status !== 0) {
+      process.stderr.write(
+        `(worktree reset: git clean failed in ${targetRepo}, continuing): ${clean.stderr ?? ''}\n`,
+      )
+    }
+  } catch (cause) {
+    process.stderr.write(
+      `(worktree reset failed; non-blocking): ${
+        cause instanceof Error ? cause.message : String(cause)
+      }\n`,
+    )
+  }
 }
 
 /**
@@ -1098,4 +1214,12 @@ export async function rescueCommit(targetRepo: string, taskId: string): Promise<
 }
 
 // Re-exports for convenience
-export { runReporter, runReviewer, runTester, runBuilder, estimateCost, isErr, asProjectSlug }
+export {
+  runReporter,
+  runReviewer,
+  runTester,
+  runBuilder,
+  estimateCost,
+  isErr,
+  asProjectSlug,
+}

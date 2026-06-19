@@ -49,7 +49,7 @@ import { runBuilder } from '../agents/builder/index.js'
 import { runChecker } from '../agents/checker/index.js'
 import { runReviewer } from '../agents/reviewer/index.js'
 import { runTester } from '../agents/tester/index.js'
-import { rescueCommit, runTask } from './index.js'
+import { rescueCommit, resetWorktreeToHead, runTask } from './index.js'
 import { readState } from './state.js'
 
 function agentResult<T>(output: T, outcome: AgentResult<T>['outcome'] = 'success'): AgentResult<T> {
@@ -173,17 +173,18 @@ describe('runTask — trustState×tier COMMIT gate wiring (#62)', () => {
 
 // ─── rescue commit on subagent timeout (#107) ────────────────────────────
 
-function makeTimeoutError() {
+// ceiling timeout — NOT retried; used in finalizeFailure rescue-commit tests
+function makeCeilingTimeoutErrorForRescue() {
   return err(
-    makeError('subagent.timeout', 'subagent killed on idle', {
+    makeError('subagent.timeout', 'subagent killed — ceiling', {
       cause: {
-        reason: 'idle',
+        reason: 'ceiling',
         idleSec: 120,
         ceilingSec: 600,
         recoveredTokens: { input: 100, output: 50 },
         recoveredCostUsd: 0.0123,
         toolCalls: 4,
-        lastActivityAgoMs: 121_000,
+        lastActivityAgoMs: 0,
         stdout: '',
         stderr: '',
       },
@@ -257,7 +258,8 @@ describe('finalizeFailure — rescue commit wiring (#107)', () => {
       .mockReturnValueOnce({ status: 0, stdout: ' M src/a.ts\n', stderr: '' })
       .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
       .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
-    vi.mocked(runBuilder).mockResolvedValueOnce(makeTimeoutError())
+    // ceiling timeout is not retried (#148) → goes straight to finalizeFailure + rescue commit
+    vi.mocked(runBuilder).mockResolvedValueOnce(makeCeilingTimeoutErrorForRescue())
 
     const r = await runTask({
       project: asProjectSlug('t'),
@@ -279,7 +281,7 @@ describe('finalizeFailure — rescue commit wiring (#107)', () => {
 
   it('timeout error with clean worktree → status checked, but no add/commit', async () => {
     spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
-    vi.mocked(runBuilder).mockResolvedValueOnce(makeTimeoutError())
+    vi.mocked(runBuilder).mockResolvedValueOnce(makeCeilingTimeoutErrorForRescue())
 
     const r = await runTask({
       project: asProjectSlug('t'),
@@ -317,5 +319,262 @@ describe('finalizeFailure — rescue commit wiring (#107)', () => {
 
     const gitCalls = spawnSyncMock.mock.calls.filter((c) => c[0] === 'git')
     expect(gitCalls).toHaveLength(0)
+  })
+})
+
+// ─── resetWorktreeToHead (#148) ──────────────────────────────────────────────
+
+describe('resetWorktreeToHead — clean worktree before timeout retry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: '', stderr: '' })
+  })
+
+  it('runs reset --hard + clean -fd when repo is reachable', async () => {
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' }) // reset
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' }) // clean
+
+    await resetWorktreeToHead('/tmp/repo')
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(2)
+    expect(spawnSyncMock.mock.calls[0][1]).toEqual(['-C', '/tmp/repo', 'reset', '--hard', 'HEAD'])
+    expect(spawnSyncMock.mock.calls[1][1]).toEqual(['-C', '/tmp/repo', 'clean', '-fd'])
+  })
+
+  it('never throws when reset fails', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 128, stdout: '', stderr: 'fatal: not a repo' })
+    await expect(resetWorktreeToHead('/tmp/repo')).resolves.toBeUndefined()
+  })
+
+  it('never throws when spawn itself throws', async () => {
+    spawnSyncMock.mockImplementation(() => {
+      throw new Error('spawn ENOENT')
+    })
+    await expect(resetWorktreeToHead('/tmp/repo')).resolves.toBeUndefined()
+  })
+})
+
+// ─── Timeout retry wiring (#148) ─────────────────────────────────────────────
+
+function makeIdleTimeoutError() {
+  return err(
+    makeError('subagent.timeout', 'subagent killed on idle', {
+      cause: {
+        reason: 'idle',
+        idleSec: 120,
+        ceilingSec: 600,
+        recoveredTokens: { input: 100, output: 50 },
+        recoveredCostUsd: 0.005,
+        toolCalls: 4,
+        lastActivityAgoMs: 121_000,
+        stdout: '',
+        stderr: '',
+      },
+    }),
+  )
+}
+
+function makeStalledTimeoutError() {
+  return err(
+    makeError('subagent.timeout', 'subagent killed — stalled', {
+      cause: {
+        reason: 'stalled',
+        idleSec: 120,
+        ceilingSec: 600,
+        recoveredTokens: { input: 500, output: 20 },
+        recoveredCostUsd: 0.012,
+        toolCalls: 22,
+        lastActivityAgoMs: 5_000,
+        stdout: '',
+        stderr: '',
+      },
+    }),
+  )
+}
+
+function makeCeilingTimeoutError() {
+  return err(
+    makeError('subagent.timeout', 'subagent killed — ceiling', {
+      cause: {
+        reason: 'ceiling',
+        idleSec: 120,
+        ceilingSec: 600,
+        recoveredTokens: { input: 1000, output: 200 },
+        recoveredCostUsd: 0.03,
+        toolCalls: 50,
+        lastActivityAgoMs: 1_000,
+        stdout: '',
+        stderr: '',
+      },
+    }),
+  )
+}
+
+describe('timeout retry wiring (#148) — BUILD stage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks() // reset call counts from previous tests in the file
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: '', stderr: '' })
+    vi.mocked(readState).mockResolvedValue(ok(makeState('SUPERVISED')))
+    // Re-establish all happy-path defaults (cleared by clearAllMocks)
+    vi.mocked(runBuilder).mockResolvedValue(
+      ok(agentResult({ commitSha: 'b1', diffPath: '', linesAdded: 1, linesRemoved: 0 })),
+    )
+    vi.mocked(runTester).mockResolvedValue(
+      ok(
+        agentResult({
+          testCommitSha: 't1',
+          coveragePercent: 90,
+          testsAdded: 1,
+          testsPassing: true,
+        }),
+      ),
+    )
+    vi.mocked(runReviewer).mockResolvedValue(
+      ok(agentResult({ verdict: 'PASS', confidence: 0.9, findings: [] })),
+    )
+    vi.mocked(runChecker).mockResolvedValue(
+      ok(agentResult({ version: 'checker/v1', verdict: 'PASS', confidence: 0.9, deficiencies: [] })),
+    )
+  })
+
+  it('BUILD idle timeout → cold retry → success → merged; retriesUsed stays 0', async () => {
+    vi.mocked(runBuilder)
+      .mockResolvedValueOnce(makeIdleTimeoutError()) // first attempt: idle timeout
+      .mockResolvedValueOnce(
+        ok(agentResult({ commitSha: 'b1', diffPath: '', linesAdded: 1, linesRemoved: 0 })),
+      ) // retry: success
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('merged')
+    expect(r.value.retriesUsed).toBe(0)
+
+    // Verify worktree was reset before retry
+    const gitCalls = spawnSyncMock.mock.calls.filter((c) => c[0] === 'git')
+    expect(gitCalls.some((c) => (c[1] as string[]).includes('reset'))).toBe(true)
+    expect(gitCalls.some((c) => (c[1] as string[]).includes('clean'))).toBe(true)
+
+    // Verify BUILD was called twice
+    expect(vi.mocked(runBuilder)).toHaveBeenCalledTimes(2)
+  })
+
+  it('BUILD stalled timeout → cold retry with nudge → success → merged', async () => {
+    vi.mocked(runBuilder)
+      .mockResolvedValueOnce(makeStalledTimeoutError())
+      .mockResolvedValueOnce(
+        ok(agentResult({ commitSha: 'b1', diffPath: '', linesAdded: 1, linesRemoved: 0 })),
+      )
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('merged')
+
+    // Second call should have timeoutNudge in payload
+    const secondCall = vi.mocked(runBuilder).mock.calls[1]
+    expect(secondCall[0].payload.timeoutNudge).toContain('read without writing')
+  })
+
+  it('BUILD ceiling timeout → BLOCKED immediately (no retry)', async () => {
+    vi.mocked(runBuilder).mockResolvedValueOnce(makeCeilingTimeoutError())
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('failed')
+    expect(vi.mocked(runBuilder)).toHaveBeenCalledTimes(1)
+  })
+
+  it('BUILD idle timeout twice → BLOCKED after retry cap (1); notes surface timeout count', async () => {
+    vi.mocked(runBuilder)
+      .mockResolvedValueOnce(makeIdleTimeoutError()) // first attempt: idle timeout
+      .mockResolvedValueOnce(makeIdleTimeoutError()) // retry: also times out → cap exhausted
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('failed')
+    expect(r.value.notes).toContain('timeout retries attempted: 1')
+    expect(vi.mocked(runBuilder)).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('timeout retry wiring (#148) — TEST stage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: '', stderr: '' })
+    vi.mocked(readState).mockResolvedValue(ok(makeState('SUPERVISED')))
+    vi.mocked(runBuilder).mockResolvedValue(
+      ok(agentResult({ commitSha: 'b1', diffPath: '', linesAdded: 1, linesRemoved: 0 })),
+    )
+    vi.mocked(runTester).mockResolvedValue(
+      ok(
+        agentResult({
+          testCommitSha: 't1',
+          coveragePercent: 90,
+          testsAdded: 1,
+          testsPassing: true,
+        }),
+      ),
+    )
+    vi.mocked(runReviewer).mockResolvedValue(
+      ok(agentResult({ verdict: 'PASS', confidence: 0.9, findings: [] })),
+    )
+    vi.mocked(runChecker).mockResolvedValue(
+      ok(agentResult({ version: 'checker/v1', verdict: 'PASS', confidence: 0.9, deficiencies: [] })),
+    )
+  })
+
+  it('TEST idle timeout → cold retry → success → merged', async () => {
+    vi.mocked(runTester)
+      .mockResolvedValueOnce(makeIdleTimeoutError())
+      .mockResolvedValueOnce(
+        ok(
+          agentResult({
+            testCommitSha: 't1',
+            coveragePercent: 90,
+            testsAdded: 1,
+            testsPassing: true,
+          }),
+        ),
+      )
+
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(4),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('merged')
+    expect(vi.mocked(runTester)).toHaveBeenCalledTimes(2)
   })
 })

@@ -1,9 +1,42 @@
 /**
- * Tests for the CHECKER quality-refire policy (H5).
+ * Tests for the CHECKER quality-refire policy (H5) and subagent timeout retry (#148).
  */
 
 import { describe, expect, it } from 'vitest'
-import { MAX_CHECKER_REFIRES_V1, shouldRefire } from './retry-policy.js'
+import {
+  MAX_CHECKER_REFIRES_V1,
+  MAX_TIMEOUT_RETRIES_V1,
+  shouldRefire,
+  shouldRetryOnTimeout,
+} from './retry-policy.js'
+
+describe('shouldRetryOnTimeout (#148)', () => {
+  it('idle kill within budget → retry', () => {
+    const d = shouldRetryOnTimeout('idle', 0)
+    expect(d.action).toBe('retry')
+    expect(d.reason).toContain('Process freeze')
+  })
+
+  it('stalled kill within budget → retry with nudge hint', () => {
+    const d = shouldRetryOnTimeout('stalled', 0)
+    expect(d.action).toBe('retry')
+    expect(d.reason).toContain('stall nudge')
+  })
+
+  it('ceiling kill → block (task overran budget; retry would hit same ceiling)', () => {
+    expect(shouldRetryOnTimeout('ceiling', 0).action).toBe('block')
+  })
+
+  it('idle at cap → block (retries exhausted)', () => {
+    const d = shouldRetryOnTimeout('idle', MAX_TIMEOUT_RETRIES_V1)
+    expect(d.action).toBe('block')
+    expect(d.reason).toContain('exhausted')
+  })
+
+  it('stalled at cap → block', () => {
+    expect(shouldRetryOnTimeout('stalled', MAX_TIMEOUT_RETRIES_V1).action).toBe('block')
+  })
+})
 
 describe('shouldRefire', () => {
   it('PASS with the deterministic matrix green → proceed to COMMIT', () => {

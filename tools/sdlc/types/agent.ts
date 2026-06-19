@@ -112,6 +112,12 @@ export interface BuilderPayload {
   /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
   readonly deficiencies?: readonly Deficiency[]
   /**
+   * Set on a timeout retry (#148). A previous attempt was killed for inactivity
+   * (idle) or for reading without writing (stalled). This nudge tells the agent
+   * why it was retried and what to do differently.
+   */
+  readonly timeoutNudge?: string
+  /**
    * Per-project deterministic validation commands (from `config.json`,
    * `ProjectConfig.validationCommands`). The BUILDER runs THESE for its
    * pre-commit self-check instead of a hardcoded `pnpm run …`, so a project
@@ -140,6 +146,11 @@ export interface TesterPayload {
   readonly coverageFloor: number
   /** Set on a CHECKER refire — the sole new input; address ONLY these (H3/H5). */
   readonly deficiencies?: readonly Deficiency[]
+  /**
+   * Set on a timeout retry (#148). A previous attempt was killed for inactivity
+   * (idle) or for reading without writing (stalled). Act on this immediately.
+   */
+  readonly timeoutNudge?: string
   /**
    * Per-project deterministic validation commands (from `config.json`,
    * `ProjectConfig.validationCommands`). The TESTER runs THESE (esp. the test
