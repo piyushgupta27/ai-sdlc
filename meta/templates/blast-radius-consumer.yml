@@ -1,0 +1,30 @@
+name: blast-radius
+
+# Scaffolded by `sdlc onboard` — do not hand-edit the reusable workflow reference.
+# To upgrade to a new platform version, run `sdlc onboard --refresh-blast-radius`.
+#
+# This workflow calls the platform-owned hardened Red zone enforcement in ai-sdlc.
+# The reusable workflow handles: NUL-delimited quotepath-safe diff, CLAUDE.md parsing,
+# and the red-zone-gate Environment gate. You supply only the base branch.
+#
+# One-time setup required in this repo (human):
+#   1. GitHub Settings → Environments → New environment → "red-zone-gate"
+#      Required reviewers: <your GitHub handle>
+#   2. Branch protection → require "require MANAGER approval" as a required status check
+#      (this gate only runs when Red zone files are touched; non-red-zone PRs pass through)
+#
+# See https://github.com/piyushgupta27/ai-sdlc/blob/main/ARCHITECTURE.md for design.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  blast-radius:
+    uses: piyushgupta27/ai-sdlc/.github/workflows/blast-radius-reusable.yml@main
+    with:
+      base_ref: ${{ github.event.pull_request.base.ref }}

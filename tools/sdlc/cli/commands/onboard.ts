@@ -21,7 +21,7 @@
 import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { initialState, projectDir, writeState } from '../../orchestrator/state.js'
+import { aiSdlcRoot, initialState, projectDir, writeState } from '../../orchestrator/state.js'
 import { type ProjectConfig, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 import { injectRules, loadCanonicalRules } from '../project-contract.js'
@@ -141,6 +141,9 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
   // 6. Force-write the canonical ai-sdlc rule-block into the target CLAUDE.md.
   await seedRules(repo)
 
+  // 7. Scaffold the platform blast-radius CI workflow into the target repo.
+  await seedBlastRadiusWorkflow(repo)
+
   process.stdout.write(`
 ✓ Onboarded ${slug}.
 
@@ -150,6 +153,13 @@ Next steps (v1 manual; v1.5+ automates these):
        gh project create --owner ${owner} --title "${slug} pipeline"
      Then add canonical columns: Ready, Building, QA, Review, Done, Blocked
   3. Run \`pnpm sdlc status --project ${slug}\` to verify state
+
+  ⚠  Blast-radius gate — two one-time steps required in GitHub:
+     a. Settings → Environments → New environment: "red-zone-gate"
+        Required reviewers: ${owner}
+     b. Settings → Branches → Branch protection for main →
+        Required status checks → add "require MANAGER approval"
+        (the gate only runs when Red zone files are touched)
 
   Note: the pipeline opens PRs against \`main\` (we merge to main).
 `)
@@ -197,6 +207,26 @@ async function seedRules(repo: string): Promise<void> {
   }
   await writeFile(claudeMdPath, after, 'utf8')
   process.stdout.write(`✓ Wrote ai-sdlc rule-block to ${claudeMdPath}\n`)
+}
+
+/**
+ * Scaffold the platform-owned blast-radius CI workflow into the target repo.
+ * Idempotent: skips if the file already exists to avoid overwriting customization.
+ * The template calls the ai-sdlc reusable workflow so detection logic stays
+ * platform-maintained — repos supply only their base_ref. See ai-sdlc#83.
+ */
+async function seedBlastRadiusWorkflow(repo: string): Promise<void> {
+  const workflowDir = join(repo, '.github', 'workflows')
+  const dest = join(workflowDir, 'blast-radius.yml')
+  if (existsSync(dest)) {
+    process.stdout.write('(.github/workflows/blast-radius.yml exists — left as-is)\n')
+    return
+  }
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'blast-radius-consumer.yml')
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(workflowDir, { recursive: true })
+  await writeFile(dest, template, 'utf8')
+  process.stdout.write(`✓ Wrote blast-radius CI workflow to ${dest}\n`)
 }
 
 function skeletonClaudeMd(slug: string, owner: string): string {
