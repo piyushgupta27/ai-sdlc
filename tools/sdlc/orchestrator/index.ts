@@ -164,7 +164,9 @@ export async function runTask(opts: {
 
     // #148: cold-retry on idle/stalled kills (ceiling → BLOCKED; code-failure → outer loop)
     while (!buildResult.ok) {
-      const toCause = isSubagentTimeoutCause(buildResult.error.cause) ? buildResult.error.cause : null
+      const toCause = isSubagentTimeoutCause(buildResult.error.cause)
+        ? buildResult.error.cause
+        : null
       if (!toCause) break
       const toDecision = shouldRetryOnTimeout(toCause.reason, buildTimeoutsUsed)
       if (toDecision.action !== 'retry') break
@@ -1214,12 +1216,4 @@ export async function rescueCommit(targetRepo: string, taskId: string): Promise<
 }
 
 // Re-exports for convenience
-export {
-  runReporter,
-  runReviewer,
-  runTester,
-  runBuilder,
-  estimateCost,
-  isErr,
-  asProjectSlug,
-}
+export { runReporter, runReviewer, runTester, runBuilder, estimateCost, isErr, asProjectSlug }

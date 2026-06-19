@@ -434,7 +434,9 @@ describe('timeout retry wiring (#148) — BUILD stage', () => {
       ok(agentResult({ verdict: 'PASS', confidence: 0.9, findings: [] })),
     )
     vi.mocked(runChecker).mockResolvedValue(
-      ok(agentResult({ version: 'checker/v1', verdict: 'PASS', confidence: 0.9, deficiencies: [] })),
+      ok(
+        agentResult({ version: 'checker/v1', verdict: 'PASS', confidence: 0.9, deficiencies: [] }),
+      ),
     )
   })
 
@@ -547,7 +549,9 @@ describe('timeout retry wiring (#148) — TEST stage', () => {
       ok(agentResult({ verdict: 'PASS', confidence: 0.9, findings: [] })),
     )
     vi.mocked(runChecker).mockResolvedValue(
-      ok(agentResult({ version: 'checker/v1', verdict: 'PASS', confidence: 0.9, deficiencies: [] })),
+      ok(
+        agentResult({ version: 'checker/v1', verdict: 'PASS', confidence: 0.9, deficiencies: [] }),
+      ),
     )
   })
 
