@@ -39,6 +39,54 @@ export const TIER_RETRY_CAPS_V1_5: Readonly<Record<Tier, number>> = {
 }
 
 /**
+ * v1 — one automatic retry for idle/stalled subagent timeouts per stage (#148).
+ *
+ * `ceiling` is NOT retried: a ceiling kill means the task genuinely overran its
+ * wall-clock budget; a cold retry will likely hit the same ceiling and waste an
+ * identical budget. Those cases should escalate for tier re-assessment.
+ */
+export const MAX_TIMEOUT_RETRIES_V1 = 1 as const
+
+/**
+ * Decision returned by `shouldRetryOnTimeout()`.
+ */
+export interface TimeoutRetryDecision {
+  readonly action: 'retry' | 'block'
+  readonly reason: string
+}
+
+/**
+ * Decide whether a timeout-killed agent should get a cold retry (#148).
+ *
+ * @param reason The kill reason from SubagentTimeoutCause
+ * @param timeoutsUsed How many timeout retries have already been attempted for this stage
+ */
+export function shouldRetryOnTimeout(
+  reason: 'idle' | 'ceiling' | 'stalled',
+  timeoutsUsed: number,
+): TimeoutRetryDecision {
+  if (reason === 'ceiling') {
+    return {
+      action: 'block',
+      reason: 'Ceiling kill — task overran its wall-clock budget; escalate for tier re-assessment',
+    }
+  }
+  if (timeoutsUsed >= MAX_TIMEOUT_RETRIES_V1) {
+    return {
+      action: 'block',
+      reason: `Timeout retry cap (${MAX_TIMEOUT_RETRIES_V1}) exhausted after ${timeoutsUsed} attempt(s)`,
+    }
+  }
+  return {
+    action: 'retry',
+    reason:
+      reason === 'stalled'
+        ? 'Read-loop stall — cold retry with stall nudge injected into payload'
+        : 'Process freeze (idle) — cold retry',
+  }
+}
+
+/**
  * Decision returned by `shouldRetry()`.
  */
 export interface RetryDecision {
