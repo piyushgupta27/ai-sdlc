@@ -198,6 +198,7 @@ Each agent is a thin shell around a Claude Code Subagent call with a focused pro
 - **Model:** Sonnet 4.6 default; Opus 4.7 fallback (Tier 0/1 OR first attempt fails validation)
 - **Self-check:** Compiles? Lints? Inline tests pass? No new `any`? Type-safety honored? CONTEXT.md updated if applicable?
 - **Escalation:** if file count >10 OR LOC >500, request PLANNER re-decomposition. If ADR-worthy decision, draft ADR and fire G1.5.
+- **Merge-conflict policy (#15):** BUILDER must not modify `package.json` version pins or `scripts` unless the AC explicitly names the change. `git checkout --theirs/--ours` is forbidden for any file — a conflict means `outcome: "escalated"`. Platform-side: `maybeCreatePr()` in `dispatch.ts` runs `pnpm install --frozen-lockfile` (the lockfile drift guard) when BUILDER's commit touches `package.json`/`pnpm-lock.yaml`; if specifiers are out of sync the push is blocked.
 
 ### 4.3 TESTER
 
