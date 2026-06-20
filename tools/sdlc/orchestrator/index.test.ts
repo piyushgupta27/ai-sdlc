@@ -355,6 +355,8 @@ describe('finalizeFailure — rescue commit wiring (#107)', () => {
     const timeoutRow = auditCalls.find(([, row]) => row.outcome === 'timeout')
     expect(timeoutRow).toBeDefined()
     expect(timeoutRow?.[1].agent).toBe('builder')
+    expect(timeoutRow?.[1].stage).toBe('BUILD')
+    expect(timeoutRow?.[1].tier).toBe(2)
     expect(timeoutRow?.[1].notes).toContain('[lastOutput:stdout]')
     expect(timeoutRow?.[1].notes).toContain('writing TypeScript code here')
     expect(timeoutRow?.[1].notes).toContain('[lastOutput:stderr]')
