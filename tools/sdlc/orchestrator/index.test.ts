@@ -49,6 +49,7 @@ import { runBuilder } from '../agents/builder/index.js'
 import { runChecker } from '../agents/checker/index.js'
 import { runReviewer } from '../agents/reviewer/index.js'
 import { runTester } from '../agents/tester/index.js'
+import { writeAuditRow } from './audit-log.js'
 import { rescueCommit, resetWorktreeToHead, runTask } from './index.js'
 import { readState } from './state.js'
 
@@ -251,6 +252,7 @@ describe('finalizeFailure — rescue commit wiring (#107)', () => {
   beforeEach(() => {
     spawnSyncMock.mockReset()
     vi.mocked(readState).mockResolvedValue(ok(makeState('SUPERVISED')))
+    vi.mocked(writeAuditRow).mockClear()
   })
 
   it('timeout error with dirty worktree → git add + commit called; notes mention rescue', async () => {
@@ -319,6 +321,46 @@ describe('finalizeFailure — rescue commit wiring (#107)', () => {
 
     const gitCalls = spawnSyncMock.mock.calls.filter((c) => c[0] === 'git')
     expect(gitCalls).toHaveLength(0)
+  })
+
+  it('timeout error with stdout/stderr → failure audit row written with lastOutput notes (#16)', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' }) // rescue commit: clean worktree
+    vi.mocked(runBuilder).mockResolvedValueOnce(
+      err(
+        makeError('subagent.timeout', 'subagent killed — ceiling', {
+          cause: {
+            reason: 'ceiling',
+            idleSec: 120,
+            ceilingSec: 600,
+            recoveredTokens: { input: 100, output: 50 },
+            recoveredCostUsd: 0.012,
+            toolCalls: 4,
+            lastActivityAgoMs: 0,
+            stdout: 'writing TypeScript code here...',
+            stderr: 'WARNING: tool call timed out',
+          },
+        }),
+      ),
+    )
+
+    await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(2),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+
+    // Find the 'timeout' outcome row among all writeAuditRow calls
+    const auditCalls = vi.mocked(writeAuditRow).mock.calls
+    const timeoutRow = auditCalls.find(([, row]) => row.outcome === 'timeout')
+    expect(timeoutRow).toBeDefined()
+    expect(timeoutRow?.[1].agent).toBe('builder')
+    expect(timeoutRow?.[1].stage).toBe('BUILD')
+    expect(timeoutRow?.[1].tier).toBe(2)
+    expect(timeoutRow?.[1].notes).toContain('[lastOutput:stdout]')
+    expect(timeoutRow?.[1].notes).toContain('writing TypeScript code here')
+    expect(timeoutRow?.[1].notes).toContain('[lastOutput:stderr]')
+    expect(timeoutRow?.[1].notes).toContain('WARNING: tool call timed out')
   })
 })
 
