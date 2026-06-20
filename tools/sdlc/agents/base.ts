@@ -131,10 +131,12 @@ export async function runAgent<TPayload, TOutput>(
   const envelope = parseEnvelope<TOutput>(dispatchResult.value.rawText)
 
   // #77: one-shot re-prompt when the agent emits prose instead of JSON.
-  // Give it one correction turn before failing — the analysis is usually
-  // correct; only the formatting is wrong (e.g. REVIEWER writing a markdown
-  // summary instead of the JSON envelope).
-  if (!envelope.ok) {
+  // Scoped to read-only roles (reviewer, checker, planner …) only.
+  // Mutating roles (builder, tester) run in a stateless fresh subprocess —
+  // a re-prompt would spawn a second independent agent and double-apply
+  // any file writes. Those roles fall through to the orchestrator's existing
+  // retry machinery instead.
+  if (!envelope.ok && !MUTATING_ROLES.has(opts.role)) {
     const repromptResult = await transport.dispatch({
       userMessage: buildRepromptMessage(opts.role, opts.brief),
       systemPrompt,
@@ -161,6 +163,10 @@ export async function runAgent<TPayload, TOutput>(
     }
     return envelope
   }
+
+  // Mutating roles (builder, tester) bypass the re-prompt above; handle their
+  // parse failure here so TypeScript can narrow envelope.value below.
+  if (!envelope.ok) return envelope
 
   // 6. Wrap with metadata
   const result = makeAgentResult(

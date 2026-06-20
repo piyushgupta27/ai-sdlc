@@ -225,4 +225,48 @@ describe('#77 — one-shot re-prompt on agent.invalid-response', () => {
     await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
     expect(captured[1]?.userMessage).toContain('CORRECTION')
   })
+
+  it('does NOT re-prompt for mutating roles (builder) — returns agent.invalid-response immediately', async () => {
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async () => {
+        callCount++
+        return {
+          ok: true as const,
+          value: {
+            rawText: PROSE_RESPONSE,
+            tokens: { input: 10, output: 20 },
+            durationMs: 100,
+            costUsd: 0.001,
+          },
+        }
+      }),
+    }
+    const result = await runAgent({ role: 'builder', brief: BASE_BRIEF, tier: 2, transport })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('agent.invalid-response')
+    expect(callCount).toBe(1) // no second dispatch
+  })
+
+  it('does NOT re-prompt for mutating roles (tester) — returns agent.invalid-response immediately', async () => {
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async () => {
+        callCount++
+        return {
+          ok: true as const,
+          value: {
+            rawText: PROSE_RESPONSE,
+            tokens: { input: 10, output: 20 },
+            durationMs: 100,
+            costUsd: 0.001,
+          },
+        }
+      }),
+    }
+    const result = await runAgent({ role: 'tester', brief: BASE_BRIEF, tier: 2, transport })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('agent.invalid-response')
+    expect(callCount).toBe(1) // no second dispatch
+  })
 })
