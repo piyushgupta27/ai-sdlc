@@ -135,3 +135,94 @@ describe('noProgressSec routing (#125)', () => {
     expect(captured[0]?.noProgressSec).toBeUndefined()
   })
 })
+
+describe('#77 — one-shot re-prompt on agent.invalid-response', () => {
+  const PROSE_RESPONSE = 'The task looks good. All ACs are met. I recommend passing.'
+
+  it('succeeds on re-prompt when first response is prose and second is valid JSON', async () => {
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async () => {
+        callCount++
+        const rawText = callCount === 1 ? PROSE_RESPONSE : SUCCESS_ENVELOPE
+        return {
+          ok: true as const,
+          value: { rawText, tokens: { input: 10, output: 20 }, durationMs: 100, costUsd: 0.001 },
+        }
+      }),
+    }
+    const result = await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(result.ok).toBe(true)
+    expect(callCount).toBe(2)
+  })
+
+  it('re-prompt dispatch uses ceilingSec 600', async () => {
+    const captured: DispatchOpts[] = []
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async (opts) => {
+        callCount++
+        captured.push(opts)
+        const rawText = callCount === 1 ? PROSE_RESPONSE : SUCCESS_ENVELOPE
+        return {
+          ok: true as const,
+          value: { rawText, tokens: { input: 10, output: 20 }, durationMs: 100, costUsd: 0.001 },
+        }
+      }),
+    }
+    await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(captured[1]?.ceilingSec).toBe(600)
+  })
+
+  it('merges costs from both dispatches', async () => {
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async () => {
+        callCount++
+        const rawText = callCount === 1 ? PROSE_RESPONSE : SUCCESS_ENVELOPE
+        return {
+          ok: true as const,
+          value: { rawText, tokens: { input: 10, output: 20 }, durationMs: 100, costUsd: 0.002 },
+        }
+      }),
+    }
+    const result = await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.costUsd).toBeCloseTo(0.004)
+  })
+
+  it('returns agent.invalid-response if both dispatches return prose', async () => {
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          rawText: PROSE_RESPONSE,
+          tokens: { input: 10, output: 20 },
+          durationMs: 100,
+          costUsd: 0.001,
+        },
+      })),
+    }
+    const result = await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('agent.invalid-response')
+  })
+
+  it('re-prompt includes CORRECTION marker in userMessage', async () => {
+    const captured: DispatchOpts[] = []
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async (opts) => {
+        callCount++
+        captured.push(opts)
+        const rawText = callCount === 1 ? PROSE_RESPONSE : SUCCESS_ENVELOPE
+        return {
+          ok: true as const,
+          value: { rawText, tokens: { input: 10, output: 20 }, durationMs: 100, costUsd: 0.001 },
+        }
+      }),
+    }
+    await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(captured[1]?.userMessage).toContain('CORRECTION')
+  })
+})

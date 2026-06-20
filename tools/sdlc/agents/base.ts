@@ -129,7 +129,38 @@ export async function runAgent<TPayload, TOutput>(
 
   // 5. Parse response
   const envelope = parseEnvelope<TOutput>(dispatchResult.value.rawText)
-  if (!envelope.ok) return envelope
+
+  // #77: one-shot re-prompt when the agent emits prose instead of JSON.
+  // Give it one correction turn before failing — the analysis is usually
+  // correct; only the formatting is wrong (e.g. REVIEWER writing a markdown
+  // summary instead of the JSON envelope).
+  if (!envelope.ok) {
+    const repromptResult = await transport.dispatch({
+      userMessage: buildRepromptMessage(opts.role, opts.brief),
+      systemPrompt,
+      model: route.model,
+      temperature: route.temperature,
+      cwd: opts.brief.targetRepo,
+      ceilingSec: 600,
+      ...(opts.brief.blastRadiusApproved
+        ? { blastRadiusApproved: opts.brief.blastRadiusApproved }
+        : {}),
+    })
+    if (repromptResult.ok) {
+      const reparsed = parseEnvelope<TOutput>(repromptResult.value.rawText)
+      if (reparsed.ok) {
+        return ok(
+          makeAgentResult(
+            reparsed.value,
+            mergeDispatchResponses(dispatchResult.value, repromptResult.value),
+            route.model,
+            'claude-code-subagent',
+          ),
+        )
+      }
+    }
+    return envelope
+  }
 
   // 6. Wrap with metadata
   const result = makeAgentResult(
@@ -203,6 +234,41 @@ function buildUserMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayloa
     '}',
     '```',
   ].join('\n')
+}
+
+/** #77: re-prompt message used when the first response was prose, not JSON. */
+function buildRepromptMessage<TPayload>(role: V1AgentRole, brief: AgentBrief<TPayload>): string {
+  return [
+    buildUserMessage(role, brief),
+    '',
+    '---',
+    '',
+    'CORRECTION: Your previous response was prose, not a JSON object.',
+    'Return ONLY the raw JSON envelope — no markdown, no prose, nothing outside the object.',
+  ].join('\n')
+}
+
+/**
+ * #77: merge two DispatchResponse values into one, combining costs and tokens.
+ * Used when a re-prompt succeeds so the caller accounts for both round-trips.
+ */
+function mergeDispatchResponses(
+  first: DispatchResponse,
+  second: DispatchResponse,
+): DispatchResponse {
+  return {
+    rawText: second.rawText,
+    durationMs: first.durationMs + second.durationMs,
+    exitCode: second.exitCode,
+    costUsd: (first.costUsd ?? 0) + (second.costUsd ?? 0),
+    tokens: {
+      input: first.tokens.input + second.tokens.input,
+      output: first.tokens.output + second.tokens.output,
+      ...(first.tokens.cacheRead !== undefined || second.tokens.cacheRead !== undefined
+        ? { cacheRead: (first.tokens.cacheRead ?? 0) + (second.tokens.cacheRead ?? 0) }
+        : {}),
+    },
+  }
 }
 
 function parseEnvelope<TOutput>(rawText: string): Result<AgentEnvelope<TOutput>, AppError> {

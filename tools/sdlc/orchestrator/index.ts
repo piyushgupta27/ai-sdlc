@@ -329,6 +329,27 @@ export async function runTask(opts: {
     })
 
     if (!reviewResult.ok) {
+      // #77: REVIEWER prose output (agent.invalid-response) should not discard
+      // committed work. BUILD+TEST already passed — degrade to hitl-pending so
+      // the branch can be manually reviewed and merged rather than discarded.
+      if (reviewResult.error.code === 'agent.invalid-response' && buildOutput.commitSha) {
+        await updateState(opts.project, (s) => ({
+          ...s,
+          inFlightTaskIds: s.inFlightTaskIds.filter((id) => id !== opts.task.id),
+        }))
+        return ok({
+          taskId: opts.task.id,
+          result: 'hitl-pending',
+          stage: 'BLOCKED',
+          commitSha: buildOutput.commitSha,
+          branch: opts.branch,
+          retriesUsed,
+          auditRunIds,
+          costUsd: totalCost,
+          durationMs: performance.now() - start,
+          notes: `REVIEWER response was not valid JSON (agent.invalid-response). BUILD+TEST passed; work committed at ${buildOutput.commitSha}. Push branch ${opts.branch} and open PR manually, or re-dispatch to retry REVIEW.`,
+        })
+      }
       return await finalizeFailure(
         opts,
         reviewResult.error,
