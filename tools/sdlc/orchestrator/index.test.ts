@@ -582,3 +582,37 @@ describe('timeout retry wiring (#148) — TEST stage', () => {
     expect(vi.mocked(runTester)).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('#77 — hitl-pending instead of failed when REVIEWER returns agent.invalid-response on converged work', () => {
+  it('returns hitl-pending when REVIEWER emits agent.invalid-response and BUILD committed a SHA', async () => {
+    vi.mocked(readState).mockResolvedValue(ok(makeState('SUPERVISED')))
+    vi.mocked(runReviewer).mockResolvedValue(
+      err(makeError('agent.invalid-response', 'Agent response was not valid JSON', {})),
+    )
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(2),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('hitl-pending')
+    expect(r.value.notes).toMatch(/agent.invalid-response/)
+    expect(r.value.notes).toMatch(/b1/) // commitSha from beforeEach runBuilder mock
+  })
+
+  it('returns failed (not hitl-pending) when REVIEWER fails for a non-parse reason', async () => {
+    vi.mocked(readState).mockResolvedValue(ok(makeState('SUPERVISED')))
+    vi.mocked(runReviewer).mockResolvedValue(err(makeError('agent.timeout', 'Agent timed out', {})))
+    const r = await runTask({
+      project: asProjectSlug('t'),
+      task: makeTask(2),
+      targetRepo: '/tmp/sdlc-test-repo',
+      branch: 'feature/gh-1',
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.result).toBe('failed')
+  })
+})
