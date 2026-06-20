@@ -209,6 +209,8 @@ export async function runTask(opts: {
         start,
         retriesUsed,
         buildTimeoutsUsed + testTimeoutsUsed,
+        'BUILD',
+        tier,
       )
     }
 
@@ -300,6 +302,8 @@ export async function runTask(opts: {
         start,
         retriesUsed,
         buildTimeoutsUsed + testTimeoutsUsed,
+        'TEST',
+        tier,
       )
     }
 
@@ -357,6 +361,9 @@ export async function runTask(opts: {
         totalCost,
         start,
         retriesUsed,
+        0,
+        'REVIEW',
+        tier,
       )
     }
 
@@ -499,6 +506,9 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
         ctx.totalCost,
         ctx.start,
         ctx.retriesUsed,
+        0,
+        'CHECK',
+        ctx.tier,
       )
     }
     ctx.totalCost += checkerResult.value.costUsd
@@ -586,6 +596,9 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
         ctx.totalCost,
         ctx.start,
         ctx.retriesUsed,
+        0,
+        'CHECK',
+        ctx.tier,
       )
     }
     // {feedback-in, what-changed} for the NEXT iteration's audit row (H5)
@@ -1090,6 +1103,31 @@ async function escalate(
   })
 }
 
+// #16: Maps a pipeline stage to the AgentRole recorded in audit rows.
+function stageToAgent(stage: StageName): AuditRow['agent'] {
+  return stage === 'BUILD'
+    ? 'builder'
+    : stage === 'TEST'
+      ? 'tester'
+      : stage === 'REVIEW'
+        ? 'reviewer'
+        : stage === 'CHECK'
+          ? 'checker'
+          : stage === 'COMMIT'
+            ? 'commit'
+            : 'reporter'
+}
+
+// #16: Returns the [lastOutput:*] diagnostic suffix for timeout audit rows.
+// Empty stdout/stderr produce empty strings so the caller can skip the notes
+// field entirely when there is no content to surface.
+function buildLastOutputNotes(stdout: string, stderr: string): string {
+  return [
+    stdout.length ? `\n[lastOutput:stdout] ${stdout.slice(-1000)}` : '',
+    stderr.length ? `\n[lastOutput:stderr] ${stderr.slice(-1000)}` : '',
+  ].join('')
+}
+
 async function finalizeFailure(
   opts: { project: ProjectSlug; task: Task; targetRepo: string },
   error: AppError,
@@ -1098,6 +1136,8 @@ async function finalizeFailure(
   startTime: number,
   retriesUsed: number,
   timeoutsUsed = 0,
+  stage?: StageName,
+  tier?: Tier,
 ): Promise<Result<TaskRunOutcome, AppError>> {
   await updateState(opts.project, (s) => ({
     ...s,
@@ -1117,9 +1157,46 @@ async function finalizeFailure(
     await rescueCommit(opts.targetRepo, opts.task.id)
   }
 
+  const durationMs = performance.now() - startTime
+
+  // #16: Write a 'timeout' audit row so the audit chain records the hung stage
+  // even when no agent result arrives. Includes the last 1KB of stdout/stderr
+  // so post-mortem can diagnose what the subagent was waiting on.
+  if (timeoutCause && stage !== undefined && tier !== undefined) {
+    const lastOutputNotes = buildLastOutputNotes(timeoutCause.stdout, timeoutCause.stderr)
+    await writeAuditRow(opts.targetRepo, {
+      ts: new Date().toISOString(),
+      project: opts.project,
+      agent: stageToAgent(stage),
+      model: 'unknown',
+      modelTransport: 'claude-code-subagent',
+      taskId: opts.task.id,
+      stage,
+      tier,
+      durationMs,
+      tokens: {
+        promptInput: timeoutCause.recoveredTokens.input,
+        promptOutput: timeoutCause.recoveredTokens.output,
+        ...(timeoutCause.recoveredTokens.cacheRead !== undefined
+          ? { cacheRead: timeoutCause.recoveredTokens.cacheRead }
+          : {}),
+      },
+      costUsd: timeoutCause.recoveredCostUsd,
+      inputFiles: [],
+      decisions: [],
+      validations: {},
+      outcome: 'timeout',
+      nextStage: 'BLOCKED',
+      ...(lastOutputNotes ? { notes: lastOutputNotes } : {}),
+    })
+  }
+
   // Return as a successful TaskRunOutcome with result='failed' — caller
   // still wants the metadata for audit + reporting; the underlying error
   // is captured in `notes`.
+  const lastOutputSuffix = timeoutCause
+    ? buildLastOutputNotes(timeoutCause.stdout, timeoutCause.stderr)
+    : ''
   return ok({
     taskId: opts.task.id,
     result: 'failed',
@@ -1127,10 +1204,10 @@ async function finalizeFailure(
     retriesUsed,
     auditRunIds,
     costUsd,
-    durationMs: performance.now() - startTime,
+    durationMs,
     notes: `Agent error: ${error.code} — ${error.message}${
       timeoutCause ? '; rescue commit attempted in worktree' : ''
-    }${timeoutsUsed > 0 ? `; timeout retries attempted: ${timeoutsUsed}` : ''}`,
+    }${timeoutsUsed > 0 ? `; timeout retries attempted: ${timeoutsUsed}` : ''}${lastOutputSuffix}`,
   })
 }
 
