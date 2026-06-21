@@ -392,15 +392,19 @@ async function seedPullRequestTemplate(repo: string): Promise<void> {
 async function seedSecretScanWorkflow(repo: string): Promise<void> {
   const workflowDir = join(repo, '.github', 'workflows')
   const dest = join(workflowDir, 'secret-scan.yml')
-  if (existsSync(dest)) {
-    process.stdout.write('(.github/workflows/secret-scan.yml exists — left as-is)\n')
-    return
-  }
   const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'secret-scan-consumer.yml')
   const template = await readFile(templatePath, 'utf8')
   await mkdir(workflowDir, { recursive: true })
-  await writeFile(dest, template, 'utf8')
-  process.stdout.write(`✓ Wrote secret-scan CI workflow to ${dest}\n`)
+  try {
+    await writeFile(dest, template, { encoding: 'utf8', flag: 'wx' })
+    process.stdout.write(`✓ Wrote secret-scan CI workflow to ${dest}\n`)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      process.stdout.write('(.github/workflows/secret-scan.yml exists — left as-is)\n')
+      return
+    }
+    throw e
+  }
 }
 
 /**
@@ -410,15 +414,19 @@ async function seedSecretScanWorkflow(repo: string): Promise<void> {
 async function seedDepAuditWorkflow(repo: string): Promise<void> {
   const workflowDir = join(repo, '.github', 'workflows')
   const dest = join(workflowDir, 'dep-audit.yml')
-  if (existsSync(dest)) {
-    process.stdout.write('(.github/workflows/dep-audit.yml exists — left as-is)\n')
-    return
-  }
   const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'dep-audit-consumer.yml')
   const template = await readFile(templatePath, 'utf8')
   await mkdir(workflowDir, { recursive: true })
-  await writeFile(dest, template, 'utf8')
-  process.stdout.write(`✓ Wrote dep-audit CI workflow to ${dest}\n`)
+  try {
+    await writeFile(dest, template, { encoding: 'utf8', flag: 'wx' })
+    process.stdout.write(`✓ Wrote dep-audit CI workflow to ${dest}\n`)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      process.stdout.write('(.github/workflows/dep-audit.yml exists — left as-is)\n')
+      return
+    }
+    throw e
+  }
 }
 
 /**
@@ -428,16 +436,20 @@ async function seedDepAuditWorkflow(repo: string): Promise<void> {
 async function seedSastWorkflow(repo: string, runtime: 'node' | 'python' | 'go'): Promise<void> {
   const workflowDir = join(repo, '.github', 'workflows')
   const dest = join(workflowDir, 'sast.yml')
-  if (existsSync(dest)) {
-    process.stdout.write('(.github/workflows/sast.yml exists — left as-is)\n')
-    return
-  }
   const templateName = `sast-${runtime}-consumer.yml`
   const templatePath = join(aiSdlcRoot(), 'meta', 'templates', templateName)
   const template = await readFile(templatePath, 'utf8')
   await mkdir(workflowDir, { recursive: true })
-  await writeFile(dest, template, 'utf8')
-  process.stdout.write(`✓ Wrote SAST CI workflow (${runtime}) to ${dest}\n`)
+  try {
+    await writeFile(dest, template, { encoding: 'utf8', flag: 'wx' })
+    process.stdout.write(`✓ Wrote SAST CI workflow (${runtime}) to ${dest}\n`)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      process.stdout.write('(.github/workflows/sast.yml exists — left as-is)\n')
+      return
+    }
+    throw e
+  }
 }
 
 /**
