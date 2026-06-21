@@ -1,6 +1,8 @@
 name: dep-audit
 
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -25,8 +27,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install production dependencies
+        run: pnpm install --prod --frozen-lockfile
 
       - name: Audit production dependencies
         run: pnpm audit --audit-level high --prod
