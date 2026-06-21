@@ -36,6 +36,11 @@ Checks (deterministic — presence, not adherence):
   - CLAUDE.md carries the canonical ai-sdlc rule-block (and matches it)
   - .github/pull_request_template.md present
 
+Security workflow checks (warn if missing — run for all / pnpm / node+python+go repos):
+  - .github/workflows/secret-scan.yml present (all repos)
+  - .github/workflows/dep-audit.yml present (pnpm repos — pnpm-lock.yaml gate)
+  - .github/workflows/sast.yml present (node/python/go repos)
+
 ai-sdlc-specific checks (only when --project ai-sdlc):
   - .github/workflows/blast-radius.yml present
   - .github/workflows/pr-labels.yml present
@@ -195,19 +200,54 @@ async function checkProject(slug: ProjectSlug, fix: boolean): Promise<ProjectRep
   }
 
   // 4. PR template present (content + CI gate are tracked in #26)
-  const prTemplate = join(repo, '.github', 'pull_request_template.md')
+  const prTemplateExists = existsSync(join(repo, '.github', 'pull_request_template.md'))
   checks.push({
     name: 'PR template',
-    status: existsSync(prTemplate) ? 'pass' : 'warn',
-    detail: existsSync(prTemplate)
-      ? 'present'
-      : 'missing .github/pull_request_template.md — see #26',
+    status: prTemplateExists ? 'pass' : 'warn',
+    detail: prTemplateExists ? 'present' : 'missing .github/pull_request_template.md — see #26',
     fixable: false,
   })
 
-  // 5–7. ai-sdlc platform self-checks (only when running doctor on the platform itself)
+  // 5. secret-scan workflow (all repos — #178)
+  const ssExists = existsSync(join(repo, '.github', 'workflows', 'secret-scan.yml'))
+  checks.push({
+    name: 'secret-scan workflow',
+    status: ssExists ? 'pass' : 'warn',
+    detail: ssExists
+      ? 'present'
+      : 'missing .github/workflows/secret-scan.yml — run sdlc onboard to scaffold',
+    fixable: false,
+  })
+
+  // 6. dep-audit workflow (pnpm repos only — gated on pnpm-lock.yaml presence)
+  if (existsSync(join(repo, 'pnpm-lock.yaml'))) {
+    const daExists = existsSync(join(repo, '.github', 'workflows', 'dep-audit.yml'))
+    checks.push({
+      name: 'dep-audit workflow',
+      status: daExists ? 'pass' : 'warn',
+      detail: daExists
+        ? 'present'
+        : 'missing .github/workflows/dep-audit.yml — run sdlc onboard to scaffold',
+      fixable: false,
+    })
+  }
+
+  // 7. sast workflow (node/python/go repos only — CodeQL language routing)
+  if (['node', 'python', 'go'].includes(cfg.runtime)) {
+    const sastExists = existsSync(join(repo, '.github', 'workflows', 'sast.yml'))
+    checks.push({
+      name: 'sast workflow',
+      status: sastExists ? 'pass' : 'warn',
+      detail: sastExists
+        ? 'present'
+        : 'missing .github/workflows/sast.yml — run sdlc onboard to scaffold',
+      fixable: false,
+    })
+  }
+
+  // 8–10. ai-sdlc platform self-checks (only when running doctor on the platform itself)
   if (slug === 'ai-sdlc') {
-    // 5. blast-radius workflow
+    // 8. blast-radius workflow
     const brWorkflow = join(repo, '.github', 'workflows', 'blast-radius.yml')
     const brExists = existsSync(brWorkflow)
     checks.push({
@@ -217,7 +257,7 @@ async function checkProject(slug: ProjectSlug, fix: boolean): Promise<ProjectRep
       fixable: false,
     })
 
-    // 6. pr-labels workflow
+    // 9. pr-labels workflow
     const prLabelsWorkflow = join(repo, '.github', 'workflows', 'pr-labels.yml')
     const prLabelsExists = existsSync(prLabelsWorkflow)
     checks.push({
@@ -227,7 +267,7 @@ async function checkProject(slug: ProjectSlug, fix: boolean): Promise<ProjectRep
       fixable: false,
     })
 
-    // 7. canonical GitHub labels (repoSlug = slug — assumes GitHub repo name matches project slug)
+    // 10. canonical GitHub labels (repoSlug = slug — assumes GitHub repo name matches project slug)
     checks.push(checkCanonicalLabels(cfg.owner, slug))
   }
 

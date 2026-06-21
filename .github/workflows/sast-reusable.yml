@@ -1,0 +1,47 @@
+name: sast (platform)
+
+# Reusable workflow — platform-owned, SHA-pinned CodeQL SAST.
+# ai-sdlc ships this; repos consume it via sdlc onboard scaffold.
+#
+# Supported languages: typescript, javascript, python, go
+#
+# External call (testbeds, via onboard scaffold):
+#   uses: piyushgupta27/ai-sdlc/.github/workflows/sast-reusable.yml@main
+#   with:
+#     language: typescript
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: 'CodeQL language (typescript, javascript, python, go)'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: CodeQL analyze (${{ inputs.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          languages: ${{ inputs.language }}
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          category: /language:${{ inputs.language }}
