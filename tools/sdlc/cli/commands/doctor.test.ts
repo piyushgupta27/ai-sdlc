@@ -242,7 +242,12 @@ describe('canonical labels check', () => {
   })
 
   it('warns when gh is unavailable (non-zero exit)', async () => {
-    spawnSyncMock.mockReturnValue({ status: 127, stdout: '', stderr: 'gh: command not found', error: undefined })
+    spawnSyncMock.mockReturnValue({
+      status: 127,
+      stdout: '',
+      stderr: 'gh: command not found',
+      error: undefined,
+    })
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
