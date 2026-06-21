@@ -247,7 +247,19 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     await seedSastWorkflow(repo, runtime as 'node' | 'python' | 'go')
   }
 
-  // 13. Seed canonical label taxonomy in the GitHub repo.
+  // 13. Warn if vitest.config.ts references tdd-guard (platform owns reporter injection — #152).
+  const vitestConfigPath = join(repo, 'vitest.config.ts')
+  if (existsSync(vitestConfigPath)) {
+    const vitestCfg = await readFile(vitestConfigPath, 'utf8')
+    if (vitestCfg.includes('tdd-guard')) {
+      process.stdout.write(
+        '  ⚠  vitest.config.ts references tdd-guard-vitest. Remove it — the platform injects\n' +
+          '     reporters in worktrees automatically so the daemon is always reachable. (#152)\n',
+      )
+    }
+  }
+
+  // 14. Seed canonical label taxonomy in the GitHub repo.
   await seedLabelTaxonomy(owner, slug)
 
   const hasPnpm = existsSync(join(repo, 'pnpm-lock.yaml'))

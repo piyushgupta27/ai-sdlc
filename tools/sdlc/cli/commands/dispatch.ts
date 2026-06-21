@@ -38,6 +38,7 @@ import { projectDir, readState } from '../../orchestrator/state.js'
 import {
   type ValidationCommands,
   type ValidationDetail,
+  asWorktreeCommands,
   hasDeterministicFailure,
   runValidations,
 } from '../../orchestrator/validations.js'
@@ -567,7 +568,10 @@ async function maybeCreatePr(args: {
   let gateDetails: readonly ValidationDetail[] = []
   if (args.validationCommands) {
     process.stdout.write('  ▸ Pre-PR validation (typecheck/lint/test)...\n')
-    const { validations, details } = await runValidations(args.repoPath, args.validationCommands)
+    const { validations, details } = await runValidations(
+      args.repoPath,
+      asWorktreeCommands(args.validationCommands, args.repoPath),
+    )
     gateDetails = details
     if (hasDeterministicFailure(validations)) {
       const failing = Object.entries(validations)

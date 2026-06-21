@@ -48,6 +48,7 @@ vi.mock('../../orchestrator/index.js', () => ({
 vi.mock('../../orchestrator/validations.js', () => ({
   runValidations: vi.fn(),
   hasDeterministicFailure: vi.fn(),
+  asWorktreeCommands: vi.fn((cmds: unknown) => cmds),
 }))
 vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
