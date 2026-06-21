@@ -705,9 +705,17 @@ describe('dispatchFromBoard — tier label + assignee applied after PR creation 
       expect.arrayContaining(['api', '--method', 'POST', 'repos/org/repo/issues/5/labels']),
       expect.anything(),
     )
+    // AC2: assignee is cfg.owner ('fakeowner' from config), NOT the URL owner ('org').
     expect(spawnMock).toHaveBeenCalledWith(
       'gh',
-      expect.arrayContaining(['api', '--method', 'POST', 'repos/org/repo/issues/5/assignees']),
+      expect.arrayContaining([
+        'api',
+        '--method',
+        'POST',
+        'repos/org/repo/issues/5/assignees',
+        '-f',
+        'assignees[]=fakeowner',
+      ]),
       expect.anything(),
     )
   })

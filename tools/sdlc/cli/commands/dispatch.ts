@@ -696,13 +696,19 @@ async function maybeCreatePr(args: {
       )
     }
 
-    const assigneeRes = await runShell(
-      'gh',
-      ['api', '--method', 'POST', `${issueRef}/assignees`, '-f', `assignees[]=${prOwner}`],
-      args.repoPath,
-    )
-    if (assigneeRes.code !== 0) {
-      process.stderr.write(`  ⚠️  Assignee set failed: ${assigneeRes.stderr.trim()}\n`)
+    // Assignee = the project owner from ProjectConfig (AC2), NOT the owner segment
+    // of the PR URL (which can differ when the repo lives under an org). maybeCreatePr
+    // can't take a new arg (AC6: signature frozen), so re-read config from disk here.
+    const cfg = await readConfig(args.slug)
+    if (cfg) {
+      const assigneeRes = await runShell(
+        'gh',
+        ['api', '--method', 'POST', `${issueRef}/assignees`, '-f', `assignees[]=${cfg.owner}`],
+        args.repoPath,
+      )
+      if (assigneeRes.code !== 0) {
+        process.stderr.write(`  ⚠️  Assignee set failed: ${assigneeRes.stderr.trim()}\n`)
+      }
     }
 
     const TYPE_KEYWORDS = ['security', 'adhoc', 'dogfood', 'bug', 'enhancement']
