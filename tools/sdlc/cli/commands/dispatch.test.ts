@@ -676,3 +676,255 @@ describe('dispatchFromBoard — lockfile drift guard wiring (#15)', () => {
     )
   })
 })
+
+// ─── Suite 6 (gh-159): post-PR label + assignee wiring ───────────────────────
+
+describe('dispatchFromBoard — tier label + assignee applied after PR creation (gh-159)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('calls gh api to apply tier label and assignee after successful PR creation', async () => {
+    // git diff (no pkg files) → git push → gh pr create → gh api tier label → gh api assignees
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['api', '--method', 'POST', 'repos/org/repo/issues/5/labels']),
+      expect.anything(),
+    )
+    // AC2: assignee is cfg.owner ('fakeowner' from config), NOT the URL owner ('org').
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining([
+        'api',
+        '--method',
+        'POST',
+        'repos/org/repo/issues/5/assignees',
+        '-f',
+        'assignees[]=fakeowner',
+      ]),
+      expect.anything(),
+    )
+  })
+
+  it('still returns true (card moves to Done) when tier label api call fails', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(1, '', 'label not found')) // gh api tier label fails
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+
+    const code = await runDispatch(ARGV)
+
+    // Label failure must not abort — card still goes to Done
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+  })
+
+  it('passes correct tier label value (labels[]=tier:N where N = task.tier)', async () => {
+    // fakeItem has labels: ['tier:2'] → task.tier = 2 → label must be "tier:2"
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+
+    await runDispatch(ARGV)
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['-f', 'labels[]=tier:2']),
+      expect.anything(),
+    )
+  })
+
+  it('still returns true (card moves to Done) when assignee api call fails', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label succeeds
+      .mockReturnValueOnce(makeChildProcess(1, '', 'not a collaborator')) // gh api assignees fails
+
+    const code = await runDispatch(ARGV)
+
+    // Assignee failure must not abort — card still goes to Done
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+  })
+})
+
+// ─── Suite 7 (gh-159 AC3): type label from task title/description ─────────────
+
+describe('dispatchFromBoard — type label applied from [keyword] in task title (gh-159 AC3)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([{ ...fakeItem, title: 'Unplanned interrupt [adhoc]' }]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('applies matching type label when [keyword] appears in task title', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api type label 'adhoc'
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining([
+        'api',
+        '--method',
+        'POST',
+        'repos/org/repo/issues/5/labels',
+        '-f',
+        'labels[]=adhoc',
+      ]),
+      expect.anything(),
+    )
+  })
+
+  it('does not apply type label when no [keyword] present in title or description', async () => {
+    // Default fakeItem: title = 'Test task', body has no [keyword]
+    vi.mocked(listItems)
+      .mockReset()
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+    // no type label call expected
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    // Only 5 spawn calls — no 6th call for a type label
+    const labelCalls = spawnMock.mock.calls.filter(
+      (c) =>
+        c[0] === 'gh' &&
+        Array.isArray(c[1]) &&
+        c[1].includes('labels') &&
+        c[1].some((a: string) => a.startsWith('labels[]=') && !a.startsWith('labels[]=tier:')),
+    )
+    expect(labelCalls).toHaveLength(0)
+  })
+
+  it('type label api failure is non-fatal — card still moves to Done', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+      .mockReturnValueOnce(makeChildProcess(1, '', 'label not found')) // gh api type label fails
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+  })
+
+  it('applies matching type label when [keyword] appears in the description (body), not the title', async () => {
+    // AC3 searches `${task.title} ${task.description}` — description comes from
+    // item.content.body (projectItemToTask). Title here has NO keyword; the match
+    // must come from the body half of searchText.
+    vi.mocked(listItems)
+      .mockReset()
+      .mockResolvedValueOnce(
+        ok([
+          {
+            ...fakeItem,
+            title: 'Harden the audit chain',
+            content: {
+              ...fakeItem.content,
+              body: '## Acceptance criteria\n- close the hole [security]\n',
+            },
+          },
+        ]),
+      )
+      .mockResolvedValue(ok([]))
+
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api type label 'security'
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining([
+        'api',
+        '--method',
+        'POST',
+        'repos/org/repo/issues/5/labels',
+        '-f',
+        'labels[]=security',
+      ]),
+      expect.anything(),
+    )
+  })
+})
+
+// ─── Suite 8 (gh-159 AC5): PR URL extraction guard ───────────────────────────
+
+describe('dispatchFromBoard — PR URL extraction guard (gh-159 AC5)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('skips all gh api label/assignee calls when the PR URL is non-standard (guard false), still moving card to Done', async () => {
+    // `gh pr create` returns a degenerate, non-github.com string. URL parsing yields
+    // undefined owner/repo, so `if (prOwner && prRepo && prNumber)` is false and the
+    // whole label/assignee block is skipped — but the function must still return true.
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'created\n')) // gh pr create → malformed URL
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    // No `gh api` call should have been attempted off a malformed URL.
+    const apiCalls = spawnMock.mock.calls.filter(
+      (c) => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('api'),
+    )
+    expect(apiCalls).toHaveLength(0)
+  })
+})

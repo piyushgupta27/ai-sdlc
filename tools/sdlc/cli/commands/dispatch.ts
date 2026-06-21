@@ -673,6 +673,76 @@ async function maybeCreatePr(args: {
     return false
   }
   process.stdout.write(`  ✓ PR opened: ${prResult.stdout.trim()}\n`)
+
+  // Apply tier label, assignee, and type labels via gh api (best-effort; non-fatal).
+  // Parse owner/repo/number from the PR URL using URL parser — robust against query strings
+  // and path-prefix variations (split('/')[N] is position-sensitive and breaks on GHE paths).
+  let prOwner: string | undefined
+  let prRepo: string | undefined
+  let prNumber: string | undefined
+  try {
+    const parsed = new URL(prResult.stdout.trim())
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    // pathname for https://github.com/owner/repo/pull/N → ['owner','repo','pull','N']
+    if (parts.length >= 4 && parts[2] === 'pull') {
+      prOwner = parts[0]
+      prRepo = parts[1]
+      prNumber = parts[3]
+    }
+  } catch {
+    // non-URL gh output — skip decoration silently
+  }
+
+  if (prOwner && prRepo && prNumber) {
+    const issueRef = `repos/${prOwner}/${prRepo}/issues/${prNumber}`
+
+    const tierLabelRes = await runShell(
+      'gh',
+      ['api', '--method', 'POST', `${issueRef}/labels`, '-f', `labels[]=tier:${args.task.tier}`],
+      args.repoPath,
+    )
+    if (tierLabelRes.code !== 0) {
+      process.stderr.write(
+        `  ⚠️  tier:${args.task.tier} label failed: ${tierLabelRes.stderr.trim()}\n`,
+      )
+    }
+
+    // Assignee = the project owner from ProjectConfig (AC2), NOT the owner segment
+    // of the PR URL (which can differ when the repo lives under an org). maybeCreatePr
+    // can't take a new arg (AC6: signature frozen), so re-read config from disk here.
+    const cfg = await readConfig(args.slug)
+    if (cfg) {
+      const assigneeRes = await runShell(
+        'gh',
+        ['api', '--method', 'POST', `${issueRef}/assignees`, '-f', `assignees[]=${cfg.owner}`],
+        args.repoPath,
+      )
+      if (assigneeRes.code !== 0) {
+        process.stderr.write(`  ⚠️  Assignee set failed: ${assigneeRes.stderr.trim()}\n`)
+      }
+    }
+
+    // Only keywords that correspond to seeded CANONICAL_LABELS — omit 'bug'/'enhancement'
+    // which are not seeded by `sdlc onboard` and would 422 on every onboarded repo.
+    const TYPE_KEYWORDS = ['security', 'adhoc', 'dogfood']
+    const searchText = `${args.task.title} ${args.task.description}`
+    const typeLabels = TYPE_KEYWORDS.filter((kw) => new RegExp(`\\[${kw}\\]`, 'i').test(searchText))
+    for (const label of typeLabels) {
+      const typeLabelRes = await runShell(
+        'gh',
+        ['api', '--method', 'POST', `${issueRef}/labels`, '-f', `labels[]=${label}`],
+        args.repoPath,
+      )
+      if (typeLabelRes.code !== 0) {
+        process.stderr.write(`  ⚠️  Type label "${label}" failed: ${typeLabelRes.stderr.trim()}\n`)
+      }
+    }
+  } else {
+    process.stderr.write(
+      `  ⚠️  Could not parse PR URL for label decoration: ${prResult.stdout.trim()}\n`,
+    )
+  }
+
   return true
 }
 
