@@ -5,6 +5,7 @@
  * automatable ones. See #41.
  */
 
+import { execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -34,7 +35,30 @@ Checks (deterministic — presence, not adherence):
   - config.json declares validationCommands (typecheck/lint/test)
   - CLAUDE.md carries the canonical ai-sdlc rule-block (and matches it)
   - .github/pull_request_template.md present
+
+ai-sdlc-specific checks (only when --project ai-sdlc):
+  - .github/workflows/blast-radius.yml present
+  - .github/workflows/pr-labels.yml present
+  - 15 canonical GitHub labels present (tier:0-4, blocked, hitl-pending, security, adhoc, dogfood, phase:*)
 `
+
+const CANONICAL_LABELS = [
+  'tier:0',
+  'tier:1',
+  'tier:2',
+  'tier:3',
+  'tier:4',
+  'blocked',
+  'hitl-pending',
+  'security',
+  'adhoc',
+  'dogfood',
+  'phase:0-floor',
+  'phase:1-build',
+  'phase:2-scale',
+  'phase:3-ops',
+  'phase:4-optimize',
+] as const
 
 type CheckStatus = 'pass' | 'fail' | 'warn'
 
@@ -48,6 +72,32 @@ interface CheckResult {
 interface ProjectReport {
   readonly slug: string
   readonly checks: readonly CheckResult[]
+}
+
+function checkCanonicalLabels(owner: string, slug: string): CheckResult {
+  try {
+    const raw = execSync(`gh label list --repo ${owner}/${slug} --limit 100 --json name`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const parsed = JSON.parse(raw) as Array<{ name: string }>
+    const present = new Set(parsed.map((l) => l.name))
+    const missing = CANONICAL_LABELS.filter((l) => !present.has(l))
+    return {
+      name: 'canonical labels',
+      status: missing.length === 0 ? 'pass' : 'fail',
+      detail:
+        missing.length === 0 ? '15 canonical labels present' : `missing: ${missing.join(', ')}`,
+      fixable: false,
+    }
+  } catch {
+    return {
+      name: 'canonical labels',
+      status: 'warn',
+      detail: 'gh unavailable — cannot verify labels',
+      fixable: false,
+    }
+  }
 }
 
 async function readConfig(slug: ProjectSlug): Promise<ProjectConfig | null> {
@@ -139,6 +189,30 @@ async function checkProject(slug: ProjectSlug, fix: boolean): Promise<ProjectRep
       : 'missing .github/pull_request_template.md — see #26',
     fixable: false,
   })
+
+  // 5–7. ai-sdlc platform self-checks (only when running doctor on the platform itself)
+  if (slug === 'ai-sdlc') {
+    // 5. blast-radius workflow
+    const brWorkflow = join(repo, '.github', 'workflows', 'blast-radius.yml')
+    checks.push({
+      name: 'blast-radius workflow',
+      status: existsSync(brWorkflow) ? 'pass' : 'fail',
+      detail: existsSync(brWorkflow) ? 'present' : 'missing .github/workflows/blast-radius.yml',
+      fixable: false,
+    })
+
+    // 6. pr-labels workflow
+    const prLabelsWorkflow = join(repo, '.github', 'workflows', 'pr-labels.yml')
+    checks.push({
+      name: 'pr-labels workflow',
+      status: existsSync(prLabelsWorkflow) ? 'pass' : 'fail',
+      detail: existsSync(prLabelsWorkflow) ? 'present' : 'missing .github/workflows/pr-labels.yml',
+      fixable: false,
+    })
+
+    // 7. 15 canonical GitHub labels
+    checks.push(checkCanonicalLabels(cfg.owner, slug))
+  }
 
   return { slug, checks }
 }
