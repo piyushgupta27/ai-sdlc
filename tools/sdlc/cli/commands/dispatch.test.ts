@@ -851,4 +851,80 @@ describe('dispatchFromBoard — type label applied from [keyword] in task title 
     expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
     expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
   })
+
+  it('applies matching type label when [keyword] appears in the description (body), not the title', async () => {
+    // AC3 searches `${task.title} ${task.description}` — description comes from
+    // item.content.body (projectItemToTask). Title here has NO keyword; the match
+    // must come from the body half of searchText.
+    vi.mocked(listItems)
+      .mockReset()
+      .mockResolvedValueOnce(
+        ok([
+          {
+            ...fakeItem,
+            title: 'Harden the audit chain',
+            content: {
+              ...fakeItem.content,
+              body: '## Acceptance criteria\n- close the hole [security]\n',
+            },
+          },
+        ]),
+      )
+      .mockResolvedValue(ok([]))
+
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api type label 'security'
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining([
+        'api',
+        '--method',
+        'POST',
+        'repos/org/repo/issues/5/labels',
+        '-f',
+        'labels[]=security',
+      ]),
+      expect.anything(),
+    )
+  })
+})
+
+// ─── Suite 8 (gh-159 AC5): PR URL extraction guard ───────────────────────────
+
+describe('dispatchFromBoard — PR URL extraction guard (gh-159 AC5)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('skips all gh api label/assignee calls when the PR URL is non-standard (guard false), still moving card to Done', async () => {
+    // `gh pr create` returns a degenerate, non-github.com string. URL parsing yields
+    // undefined owner/repo, so `if (prOwner && prRepo && prNumber)` is false and the
+    // whole label/assignee block is skipped — but the function must still return true.
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'created\n')) // gh pr create → malformed URL
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    // No `gh api` call should have been attempted off a malformed URL.
+    const apiCalls = spawnMock.mock.calls.filter(
+      (c) => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('api'),
+    )
+    expect(apiCalls).toHaveLength(0)
+  })
 })
