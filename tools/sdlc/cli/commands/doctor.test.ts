@@ -262,6 +262,26 @@ describe('canonical labels check', () => {
   })
 })
 
+// ─── HELP string mentions ai-sdlc-specific checks (AC#5) ─────────────────────
+
+describe('HELP output', () => {
+  it('mentions ai-sdlc-specific checks section', async () => {
+    let helpOut = ''
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      helpOut += String(s)
+      return true
+    })
+
+    const code = await runDoctor(['--help'])
+
+    expect(code).toBe(0)
+    expect(helpOut).toContain('ai-sdlc-specific checks')
+    expect(helpOut).toContain('blast-radius.yml')
+    expect(helpOut).toContain('pr-labels.yml')
+    expect(helpOut).toContain('15 canonical GitHub labels')
+  })
+})
+
 // ─── slug guard: ai-sdlc checks skipped for other projects ───────────────────
 
 describe('ai-sdlc checks skipped for other slugs', () => {
