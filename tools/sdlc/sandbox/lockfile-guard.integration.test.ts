@@ -19,7 +19,7 @@ describe('detectLockfileDrift (integration) — #15 --theirs revert scenario', (
     // A feature branch still had ^1.0.0 in package.json (pre-upgrade).
     // `git checkout --theirs package.json` reverted it to ^1.0.0.
     // pnpm-lock.yaml was NOT reverted — still says specifier: ^2.0.0.
-    // pnpm install --frozen-lockfile detects the specifier mismatch and fails.
+    // pnpm install --frozen-lockfile --lockfile-only detects the mismatch and fails.
     const dir = mkdtempSync(join(tmpdir(), 'sdlc-lockfile-guard-'))
 
     writeFileSync(

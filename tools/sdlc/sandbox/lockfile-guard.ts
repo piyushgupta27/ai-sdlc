@@ -8,11 +8,10 @@
  * `pnpm install --frozen-lockfile` starts failing in CI with
  * ERR_PNPM_OUTDATED_LOCKFILE.
  *
- * `detectLockfileDrift` runs `pnpm install --frozen-lockfile` in the worktree
- * and treats a non-zero exit as drift. pnpm checks specifier alignment before
- * downloading anything, so the check is fast and network-free when there IS a
- * mismatch; it completes normally (no downloads needed) when node_modules is
- * already up-to-date.
+ * `detectLockfileDrift` runs `pnpm install --frozen-lockfile --lockfile-only`
+ * in the worktree and treats a non-zero exit as drift. `--lockfile-only` skips
+ * all package resolution and never writes node_modules, so the check is safe
+ * in git worktrees where node_modules is symlinked to the main repo.
  *
  * Called from `maybeCreatePr()` in dispatch.ts only when the BUILDER's commit
  * touched `package.json` or `pnpm-lock.yaml`, to avoid adding install latency
@@ -30,7 +29,7 @@ export interface LockfileDriftResult {
 }
 
 /**
- * Run `pnpm install --frozen-lockfile` in repoPath.
+ * Run `pnpm install --frozen-lockfile --lockfile-only` in repoPath.
  *
  * Returns:
  *  - `ok({ drifted: false })` — lockfile consistent with package.json
@@ -42,7 +41,7 @@ export function detectLockfileDrift(
 ): Promise<Result<LockfileDriftResult, AppError>> {
   return new Promise((resolve) => {
     let stderr = ''
-    const proc = spawn('pnpm', ['install', '--frozen-lockfile'], {
+    const proc = spawn('pnpm', ['install', '--frozen-lockfile', '--lockfile-only'], {
       cwd: repoPath,
       stdio: ['ignore', 'ignore', 'pipe'],
     })
@@ -61,7 +60,7 @@ export function detectLockfileDrift(
         err(
           makeError(
             'lockfile.check-failed',
-            `pnpm install --frozen-lockfile could not be launched: ${e.message}`,
+            `pnpm install --frozen-lockfile --lockfile-only could not be launched: ${e.message}`,
             { cause: e, fix: 'Ensure pnpm is installed and available on PATH.' },
           ),
         ),

@@ -51,6 +51,7 @@ vi.mock('../../orchestrator/validations.js', () => ({
 }))
 vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
+  detectLockfileDrift: vi.fn(),
 }))
 vi.mock('../../integrations/ntfy.js', async (importOriginal) => {
   const actual = await importOriginal()
@@ -68,7 +69,7 @@ import { budgetGate } from '../../orchestrator/budget.js'
 import { runTask } from '../../orchestrator/index.js'
 import { listProjects, projectDir, readState } from '../../orchestrator/state.js'
 import { hasDeterministicFailure, runValidations } from '../../orchestrator/validations.js'
-import { provisionWorktreeSandbox } from '../../sandbox/index.js'
+import { detectLockfileDrift, provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { buildPrBody, runDispatch } from './dispatch.js'
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
@@ -625,5 +626,53 @@ describe('buildPrBody', () => {
       const body = buildPrBody({ ...baseArgs, templateContent: FAKE_TEMPLATE })
       expect(body).not.toContain('...')
     })
+  })
+})
+
+// ─── Suite 5 (#15 follow-on): lockfile drift guard wiring ────────────────────
+
+describe('dispatchFromBoard — lockfile drift guard wiring (#15)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('blocks push and moves card to Blocked when package.json specifier was reverted via --theirs', async () => {
+    vi.mocked(detectLockfileDrift).mockResolvedValue(
+      ok({ drifted: true, reason: 'is-array: package.json has ^1.0.0, lockfile has ^2.0.0' }),
+    )
+    spawnMock.mockReturnValueOnce(makeChildProcess(0, 'package.json\n')) // git diff → pkg touched
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(1)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    // push must never fire — guard returns before reaching it
+    expect(spawnMock).not.toHaveBeenCalledWith(
+      'git',
+      expect.arrayContaining(['push']),
+      expect.anything(),
+    )
+  })
+
+  it('proceeds to push when package.json is touched but lockfile is clean', async () => {
+    vi.mocked(detectLockfileDrift).mockResolvedValue(ok({ drifted: false }))
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, 'package.json\n')) // git diff → pkg touched
+      .mockReturnValueOnce(makeChildProcess(0)) // git push succeeds
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/2\n')) // gh pr create
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(spawnMock).toHaveBeenCalledWith(
+      'git',
+      expect.arrayContaining(['push']),
+      expect.anything(),
+    )
   })
 })
