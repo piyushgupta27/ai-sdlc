@@ -41,7 +41,7 @@ import {
   hasDeterministicFailure,
   runValidations,
 } from '../../orchestrator/validations.js'
-import { provisionWorktreeSandbox } from '../../sandbox/index.js'
+import { detectLockfileDrift, provisionWorktreeSandbox } from '../../sandbox/index.js'
 import { type ProjectSlug, type Task, type Tier, asProjectSlug } from '../../types/index.js'
 import { getFlag, hasFlag, parseArgs, requireFlag } from '../args.js'
 
@@ -580,6 +580,43 @@ async function maybeCreatePr(args: {
       return false
     }
     process.stdout.write('  ✓ Pre-PR validations green\n')
+  }
+
+  // Lockfile drift guard (#15): if this commit touched package.json or
+  // pnpm-lock.yaml, verify they're still in sync before pushing. Catches the
+  // `--theirs` failure mode where package.json gets reverted to an older specifier
+  // but pnpm-lock.yaml keeps the newer one, breaking `pnpm install --frozen-lockfile`.
+  const driftChangedFiles = await runShell(
+    'git',
+    ['diff', 'origin/main..HEAD', '--name-only'],
+    args.repoPath,
+  )
+  const touchedPackageFiles =
+    driftChangedFiles.code === 0 &&
+    driftChangedFiles.stdout
+      .split('\n')
+      .some((f) => /^(package\.json|pnpm-lock\.yaml)$/.test(f.trim()))
+  if (touchedPackageFiles) {
+    process.stdout.write('  ▸ Lockfile drift check (package.json touched)...\n')
+    const driftResult = await detectLockfileDrift(args.repoPath)
+    if (!driftResult.ok) {
+      process.stderr.write(
+        `  ⚠️  Lockfile drift check could not run: ${driftResult.error.message}\n`,
+      )
+    } else if (driftResult.value.drifted) {
+      process.stderr.write(
+        '  ❌ Lockfile drift: package.json and pnpm-lock.yaml are out of sync.\n' +
+          '     package.json may have been reverted via --theirs. Not pushing.\n',
+      )
+      if (driftResult.value.reason) {
+        process.stderr.write(
+          `     ${driftResult.value.reason.split('\n').slice(0, 3).join('\n     ')}\n`,
+        )
+      }
+      return false
+    } else {
+      process.stdout.write('  ✓ Lockfile consistent\n')
+    }
   }
 
   process.stdout.write(`  ▸ Pushing ${args.branch}...\n`)

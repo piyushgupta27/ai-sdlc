@@ -267,7 +267,9 @@ describe('dispatchFromBoard — Done/Blocked deferral (Bug 2: PR-create gates Do
   })
 
   it('moves card to Blocked and exits 1 when git push fails', async () => {
-    spawnMock.mockReturnValueOnce(makeChildProcess(1, '', 'fatal: no upstream branch'))
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff (lockfile guard #15 — no pkg files)
+      .mockReturnValueOnce(makeChildProcess(1, '', 'fatal: no upstream branch')) // git push fails
 
     const code = await runDispatch(ARGV)
 
@@ -278,8 +280,9 @@ describe('dispatchFromBoard — Done/Blocked deferral (Bug 2: PR-create gates Do
 
   it('moves card to Blocked and exits 1 when gh pr create fails', async () => {
     spawnMock
-      .mockReturnValueOnce(makeChildProcess(0))
-      .mockReturnValueOnce(makeChildProcess(1, '', 'already exists'))
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff (lockfile guard #15 — no pkg files)
+      .mockReturnValueOnce(makeChildProcess(0)) // git push succeeds
+      .mockReturnValueOnce(makeChildProcess(1, '', 'already exists')) // gh pr create fails
 
     const code = await runDispatch(ARGV)
 

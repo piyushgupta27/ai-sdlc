@@ -7,3 +7,5 @@
 
 export type { Sandbox, SandboxRequest, SandboxProvider } from './types.js'
 export { provisionWorktreeSandbox } from './worktree.js'
+export { detectLockfileDrift } from './lockfile-guard.js'
+export type { LockfileDriftResult } from './lockfile-guard.js'
