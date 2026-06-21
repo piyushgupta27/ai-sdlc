@@ -727,4 +727,120 @@ describe('dispatchFromBoard — tier label + assignee applied after PR creation 
     expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
     expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
   })
+
+  it('passes correct tier label value (labels[]=tier:N where N = task.tier)', async () => {
+    // fakeItem has labels: ['tier:2'] → task.tier = 2 → label must be "tier:2"
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+
+    await runDispatch(ARGV)
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['-f', 'labels[]=tier:2']),
+      expect.anything(),
+    )
+  })
+
+  it('still returns true (card moves to Done) when assignee api call fails', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label succeeds
+      .mockReturnValueOnce(makeChildProcess(1, '', 'not a collaborator')) // gh api assignees fails
+
+    const code = await runDispatch(ARGV)
+
+    // Assignee failure must not abort — card still goes to Done
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+  })
+})
+
+// ─── Suite 7 (gh-159 AC3): type label from task title/description ─────────────
+
+describe('dispatchFromBoard — type label applied from [keyword] in task title (gh-159 AC3)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([{ ...fakeItem, title: 'Fix the bug [bug]' }]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('applies matching type label when [keyword] appears in task title', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api type label 'bug'
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining([
+        'api',
+        '--method',
+        'POST',
+        'repos/org/repo/issues/5/labels',
+        '-f',
+        'labels[]=bug',
+      ]),
+      expect.anything(),
+    )
+  })
+
+  it('does not apply type label when no [keyword] present in title or description', async () => {
+    // Default fakeItem: title = 'Test task', body has no [keyword]
+    vi.mocked(listItems)
+      .mockReset()
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+    // no type label call expected
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    // Only 5 spawn calls — no 6th call for a type label
+    const labelCalls = spawnMock.mock.calls.filter(
+      (c) =>
+        c[0] === 'gh' &&
+        Array.isArray(c[1]) &&
+        c[1].includes('labels') &&
+        c[1].some((a: string) => a.startsWith('labels[]=') && !a.startsWith('labels[]=tier:')),
+    )
+    expect(labelCalls).toHaveLength(0)
+  })
+
+  it('type label api failure is non-fatal — card still moves to Done', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+      .mockReturnValueOnce(makeChildProcess(1, '', 'label not found')) // gh api type label fails
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+  })
 })
