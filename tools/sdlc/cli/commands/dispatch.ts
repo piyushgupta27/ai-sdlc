@@ -673,6 +673,53 @@ async function maybeCreatePr(args: {
     return false
   }
   process.stdout.write(`  ✓ PR opened: ${prResult.stdout.trim()}\n`)
+
+  // Apply tier label, assignee, and type labels via gh api (best-effort; non-fatal).
+  // Parse owner/repo/number from the PR URL: https://github.com/{owner}/{repo}/pull/{number}
+  const prUrl = prResult.stdout.trim()
+  const urlParts = prUrl.split('/')
+  const prOwner = urlParts[3]
+  const prRepo = urlParts[4]
+  const prNumber = urlParts.at(-1)
+
+  if (prOwner && prRepo && prNumber) {
+    const issueRef = `repos/${prOwner}/${prRepo}/issues/${prNumber}`
+
+    const tierLabelRes = await runShell(
+      'gh',
+      ['api', '--method', 'POST', `${issueRef}/labels`, '-f', `labels[]=tier:${args.task.tier}`],
+      args.repoPath,
+    )
+    if (tierLabelRes.code !== 0) {
+      process.stderr.write(
+        `  ⚠️  tier:${args.task.tier} label failed: ${tierLabelRes.stderr.trim()}\n`,
+      )
+    }
+
+    const assigneeRes = await runShell(
+      'gh',
+      ['api', '--method', 'POST', `${issueRef}/assignees`, '-f', `assignees[]=${prOwner}`],
+      args.repoPath,
+    )
+    if (assigneeRes.code !== 0) {
+      process.stderr.write(`  ⚠️  Assignee set failed: ${assigneeRes.stderr.trim()}\n`)
+    }
+
+    const TYPE_KEYWORDS = ['security', 'adhoc', 'dogfood', 'bug', 'enhancement']
+    const searchText = `${args.task.title} ${args.task.description}`
+    const typeLabels = TYPE_KEYWORDS.filter((kw) => new RegExp(`\\[${kw}\\]`, 'i').test(searchText))
+    for (const label of typeLabels) {
+      const typeLabelRes = await runShell(
+        'gh',
+        ['api', '--method', 'POST', `${issueRef}/labels`, '-f', `labels[]=${label}`],
+        args.repoPath,
+      )
+      if (typeLabelRes.code !== 0) {
+        process.stderr.write(`  ⚠️  Type label "${label}" failed: ${typeLabelRes.stderr.trim()}\n`)
+      }
+    }
+  }
+
   return true
 }
 

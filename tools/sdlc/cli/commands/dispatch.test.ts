@@ -676,3 +676,55 @@ describe('dispatchFromBoard — lockfile drift guard wiring (#15)', () => {
     )
   })
 })
+
+// ─── Suite 6 (gh-159): post-PR label + assignee wiring ───────────────────────
+
+describe('dispatchFromBoard — tier label + assignee applied after PR creation (gh-159)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+    vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
+  })
+
+  it('calls gh api to apply tier label and assignee after successful PR creation', async () => {
+    // git diff (no pkg files) → git push → gh pr create → gh api tier label → gh api assignees
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+
+    const code = await runDispatch(ARGV)
+
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['api', '--method', 'POST', 'repos/org/repo/issues/5/labels']),
+      expect.anything(),
+    )
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['api', '--method', 'POST', 'repos/org/repo/issues/5/assignees']),
+      expect.anything(),
+    )
+  })
+
+  it('still returns true (card moves to Done) when tier label api call fails', async () => {
+    spawnMock
+      .mockReturnValueOnce(makeChildProcess(0, '')) // git diff
+      .mockReturnValueOnce(makeChildProcess(0)) // git push
+      .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
+      .mockReturnValueOnce(makeChildProcess(1, '', 'label not found')) // gh api tier label fails
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
+
+    const code = await runDispatch(ARGV)
+
+    // Label failure must not abort — card still goes to Done
+    expect(code).toBe(0)
+    expect(vi.mocked(moveItem)).toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Done')
+    expect(vi.mocked(moveItem)).not.toHaveBeenCalledWith(fakeProject, fakeItem.id, 'Blocked')
+  })
+})
