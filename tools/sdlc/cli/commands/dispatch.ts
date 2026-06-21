@@ -738,7 +738,9 @@ async function maybeCreatePr(args: {
       }
     }
   } else {
-    process.stderr.write(`  ⚠️  Could not parse PR URL for label decoration: ${prResult.stdout.trim()}\n`)
+    process.stderr.write(
+      `  ⚠️  Could not parse PR URL for label decoration: ${prResult.stdout.trim()}\n`,
+    )
   }
 
   return true
