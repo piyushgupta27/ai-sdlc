@@ -1,0 +1,39 @@
+name: dep-audit (platform)
+
+# Reusable workflow — platform-owned, SHA-pinned dependency audit.
+# ai-sdlc ships this; repos consume it via sdlc onboard scaffold.
+#
+# Requires: pnpm-lock.yaml present in the consumer repo.
+#
+# External call (testbeds, via onboard scaffold):
+#   uses: piyushgupta27/ai-sdlc/.github/workflows/dep-audit-reusable.yml@main
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  dep-audit:
+    name: pnpm audit (high+, prod only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install production dependencies
+        run: pnpm install --prod --frozen-lockfile
+
+      - name: Audit production dependencies
+        run: pnpm audit --audit-level high --prod

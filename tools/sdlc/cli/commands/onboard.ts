@@ -10,7 +10,10 @@
  *   6. Scaffold blast-radius CI workflow (.github/workflows/blast-radius.yml)
  *   7. Scaffold PR label enforcement workflow (.github/workflows/pr-labels.yml)
  *   8. Scaffold PR template (.github/pull_request_template.md)
- *   9. Seed canonical label taxonomy in the GitHub repo (via gh CLI)
+ *   9. Scaffold secret-scan CI workflow (.github/workflows/secret-scan.yml)
+ *  10. Scaffold dep-audit CI workflow (.github/workflows/dep-audit.yml) — pnpm repos
+ *  11. Scaffold SAST CI workflow (.github/workflows/sast.yml) — node/python/go repos
+ *  12. Seed canonical label taxonomy in the GitHub repo (via gh CLI)
  *
  * v1.5+ deliverables NOT in this onboard yet:
  *   - GitHub Project board creation via gh project create
@@ -181,8 +184,11 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
     process.stdout.write(`Would write initial state to projects/${slug}/state.json.\n`)
     process.stdout.write(`Would create skeleton CLAUDE.md if not present in ${repo}.\n`)
     process.stdout.write(`Would ensure .audit/ + .sdlc-queue/ are gitignored in ${repo}.\n`)
+    const securityWorkflows = ['secret-scan']
+    if (existsSync(join(repo, 'pnpm-lock.yaml'))) securityWorkflows.push('dep-audit')
+    if (['node', 'python', 'go'].includes(runtime)) securityWorkflows.push('sast')
     process.stdout.write(
-      `Would scaffold blast-radius workflow, PR label check, and PR template in ${repo}.\n`,
+      `Would scaffold blast-radius workflow, PR label check, PR template, and security workflows (${securityWorkflows.join(', ')}) in ${repo}.\n`,
     )
     process.stdout.write(
       `Would seed ${CANONICAL_LABELS.length} canonical labels in ${owner}/${slug}.\n`,
@@ -228,8 +234,31 @@ export async function runOnboard(argv: readonly string[]): Promise<number> {
   // 9. Scaffold PR template (.github/pull_request_template.md).
   await seedPullRequestTemplate(repo)
 
-  // 10. Seed canonical label taxonomy in the GitHub repo.
+  // 10. Scaffold secret-scan CI workflow (all repos — #178).
+  await seedSecretScanWorkflow(repo)
+
+  // 11. Scaffold dep-audit CI workflow (pnpm repos only — gated on pnpm-lock.yaml).
+  if (existsSync(join(repo, 'pnpm-lock.yaml'))) {
+    await seedDepAuditWorkflow(repo)
+  }
+
+  // 12. Scaffold SAST CI workflow (node/python/go repos — CodeQL language routing).
+  if (['node', 'python', 'go'].includes(runtime)) {
+    await seedSastWorkflow(repo, runtime as 'node' | 'python' | 'go')
+  }
+
+  // 13. Seed canonical label taxonomy in the GitHub repo.
   await seedLabelTaxonomy(owner, slug)
+
+  const hasPnpm = existsSync(join(repo, 'pnpm-lock.yaml'))
+  const sastLang =
+    runtime === 'node'
+      ? 'TypeScript'
+      : runtime === 'python'
+        ? 'Python'
+        : runtime === 'go'
+          ? 'Go'
+          : null
 
   process.stdout.write(`
 ✓ Onboarded ${slug}.
@@ -241,13 +270,16 @@ Next steps (still manual — needs #9 bot identity to automate):
      Then add canonical columns: Ready, Building, QA, Review, Done, Blocked
   3. Run \`pnpm sdlc status --project ${slug}\` to verify state
 
-  ⚠  Two one-time steps required in GitHub:
+  ⚠  One-time steps required in GitHub:
      a. Settings → Environments → New environment: "red-zone-gate"
         Required reviewers: ${owner}
      b. Settings → Branches → Branch protection for main →
         Required status checks → add:
           • "require MANAGER approval"   (blast-radius; runs only on Red zone PRs)
           • "tier label required"        (pr-labels; runs on every PR)
+          • "gitleaks secret scan"       (secret-scan; runs on every PR)
+${hasPnpm ? `          • "pnpm audit (high+, prod only)"  (dep-audit; runs on every PR)\n` : ''}\
+${sastLang ? `          • "CodeQL analyze (${sastLang})"  (sast; runs on every PR)\n` : ''}\
 
   Note: the pipeline opens PRs against \`main\` (we merge to main).
 `)
@@ -351,6 +383,73 @@ async function seedPullRequestTemplate(repo: string): Promise<void> {
   await mkdir(join(repo, '.github'), { recursive: true })
   await writeFile(dest, template, 'utf8')
   process.stdout.write(`✓ Wrote PR template to ${dest}\n`)
+}
+
+/**
+ * Scaffold the secret-scan CI workflow into the target repo (all runtimes).
+ * Calls the platform-owned reusable workflow so SHA pins stay in ai-sdlc. (#178)
+ */
+async function seedSecretScanWorkflow(repo: string): Promise<void> {
+  const workflowDir = join(repo, '.github', 'workflows')
+  const dest = join(workflowDir, 'secret-scan.yml')
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'secret-scan-consumer.yml')
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(workflowDir, { recursive: true })
+  try {
+    await writeFile(dest, template, { encoding: 'utf8', flag: 'wx' })
+    process.stdout.write(`✓ Wrote secret-scan CI workflow to ${dest}\n`)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      process.stdout.write('(.github/workflows/secret-scan.yml exists — left as-is)\n')
+      return
+    }
+    throw e
+  }
+}
+
+/**
+ * Scaffold the dep-audit CI workflow into the target repo.
+ * Only called when pnpm-lock.yaml is present — the workflow requires pnpm.
+ */
+async function seedDepAuditWorkflow(repo: string): Promise<void> {
+  const workflowDir = join(repo, '.github', 'workflows')
+  const dest = join(workflowDir, 'dep-audit.yml')
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', 'dep-audit-consumer.yml')
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(workflowDir, { recursive: true })
+  try {
+    await writeFile(dest, template, { encoding: 'utf8', flag: 'wx' })
+    process.stdout.write(`✓ Wrote dep-audit CI workflow to ${dest}\n`)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      process.stdout.write('(.github/workflows/dep-audit.yml exists — left as-is)\n')
+      return
+    }
+    throw e
+  }
+}
+
+/**
+ * Scaffold the SAST CI workflow into the target repo.
+ * Only called for node/python/go runtimes — CodeQL supports these languages.
+ */
+async function seedSastWorkflow(repo: string, runtime: 'node' | 'python' | 'go'): Promise<void> {
+  const workflowDir = join(repo, '.github', 'workflows')
+  const dest = join(workflowDir, 'sast.yml')
+  const templateName = `sast-${runtime}-consumer.yml`
+  const templatePath = join(aiSdlcRoot(), 'meta', 'templates', templateName)
+  const template = await readFile(templatePath, 'utf8')
+  await mkdir(workflowDir, { recursive: true })
+  try {
+    await writeFile(dest, template, { encoding: 'utf8', flag: 'wx' })
+    process.stdout.write(`✓ Wrote SAST CI workflow (${runtime}) to ${dest}\n`)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      process.stdout.write('(.github/workflows/sast.yml exists — left as-is)\n')
+      return
+    }
+    throw e
+  }
 }
 
 /**

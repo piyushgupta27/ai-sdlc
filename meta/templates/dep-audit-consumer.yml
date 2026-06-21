@@ -1,0 +1,23 @@
+name: dep-audit
+
+# Scaffolded by `sdlc onboard` — do not hand-edit the reusable workflow reference.
+# To upgrade to a new platform version, run `sdlc onboard --refresh-dep-audit` (planned).
+#
+# This workflow calls the platform-owned pnpm audit gate in ai-sdlc.
+# SHA pins and audit flags stay platform-maintained — repos supply nothing.
+#
+# Prerequisite: pnpm-lock.yaml must be committed to this repo.
+#
+# One-time setup required in this repo (human):
+#   Settings → Branches → Branch protection for main →
+#   Required status checks → add: "pnpm audit (high+, prod only)"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dep-audit:
+    uses: piyushgupta27/ai-sdlc/.github/workflows/dep-audit-reusable.yml@main

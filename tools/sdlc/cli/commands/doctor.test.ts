@@ -91,6 +91,20 @@ const OTHER_PROJECT_CONFIG = JSON.stringify({
   },
 })
 
+const RUST_PROJECT_CONFIG = JSON.stringify({
+  slug: 'rust-project',
+  repoPath: '/fake/rust-repo',
+  owner: 'piyushgupta27',
+  runtime: 'rust',
+  visibility: 'public',
+  onboardedAt: '2024-01-01T00:00:00Z',
+  validationCommands: {
+    typecheck: 'cargo check',
+    lint: 'cargo clippy',
+    test: 'cargo test',
+  },
+})
+
 // ─── default setup ────────────────────────────────────────────────────────────
 
 beforeEach(() => {
@@ -106,7 +120,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-// ─── blast-radius workflow check (check #5) ──────────────────────────────────
+// ─── blast-radius workflow check (check #8) ──────────────────────────────────
 
 describe('blast-radius workflow check', () => {
   it('passes when .github/workflows/blast-radius.yml exists', async () => {
@@ -152,7 +166,7 @@ describe('blast-radius workflow check', () => {
   })
 })
 
-// ─── pr-labels workflow check (check #6) ─────────────────────────────────────
+// ─── pr-labels workflow check (check #9) ─────────────────────────────────────
 
 describe('pr-labels workflow check', () => {
   it('passes when .github/workflows/pr-labels.yml exists', async () => {
@@ -197,7 +211,7 @@ describe('pr-labels workflow check', () => {
   })
 })
 
-// ─── canonical labels check (check #7) ───────────────────────────────────────
+// ─── canonical labels check (check #10) ──────────────────────────────────────
 
 describe('canonical labels check', () => {
   it('passes when all 15 labels are present', async () => {
@@ -265,6 +279,191 @@ describe('canonical labels check', () => {
   })
 })
 
+// ─── secret-scan workflow check (check #5) ───────────────────────────────────
+
+describe('secret-scan workflow check', () => {
+  it('passes when .github/workflows/secret-scan.yml exists', async () => {
+    existsSyncMock.mockReturnValue(true)
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'secret-scan workflow')
+    expect(check).toBeDefined()
+    expect(check.status).toBe('pass')
+    expect(check.detail).toBe('present')
+  })
+
+  it('warns when .github/workflows/secret-scan.yml is missing', async () => {
+    existsSyncMock.mockImplementation((p: string) => {
+      if (String(p).includes('secret-scan.yml')) return false
+      return true
+    })
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'secret-scan workflow')
+    expect(check).toBeDefined()
+    expect(check.status).toBe('warn')
+    expect(check.detail).toContain('missing .github/workflows/secret-scan.yml')
+    expect(check.fixable).toBe(false)
+  })
+
+  it('runs for non-ai-sdlc projects too', async () => {
+    readFileMock.mockResolvedValue(OTHER_PROJECT_CONFIG)
+    existsSyncMock.mockReturnValue(true)
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'other-project', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'secret-scan workflow')
+    expect(check).toBeDefined()
+  })
+})
+
+// ─── dep-audit workflow check (check #6) ─────────────────────────────────────
+
+describe('dep-audit workflow check', () => {
+  it('passes when pnpm-lock.yaml + dep-audit.yml both exist', async () => {
+    existsSyncMock.mockReturnValue(true)
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'dep-audit workflow')
+    expect(check).toBeDefined()
+    expect(check.status).toBe('pass')
+    expect(check.detail).toBe('present')
+  })
+
+  it('warns when pnpm-lock.yaml exists but dep-audit.yml is missing', async () => {
+    existsSyncMock.mockImplementation((p: string) => {
+      if (String(p).includes('dep-audit.yml')) return false
+      return true
+    })
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'dep-audit workflow')
+    expect(check).toBeDefined()
+    expect(check.status).toBe('warn')
+    expect(check.detail).toContain('missing .github/workflows/dep-audit.yml')
+    expect(check.fixable).toBe(false)
+  })
+
+  it('is skipped when pnpm-lock.yaml is absent', async () => {
+    existsSyncMock.mockImplementation((p: string) => {
+      if (String(p).endsWith('pnpm-lock.yaml')) return false
+      return true
+    })
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const checkNames = json[0].checks.map((c: { name: string }) => c.name)
+    expect(checkNames).not.toContain('dep-audit workflow')
+  })
+})
+
+// ─── sast workflow check (check #7) ──────────────────────────────────────────
+
+describe('sast workflow check', () => {
+  it('passes when sast.yml exists for node project', async () => {
+    existsSyncMock.mockReturnValue(true)
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'sast workflow')
+    expect(check).toBeDefined()
+    expect(check.status).toBe('pass')
+    expect(check.detail).toBe('present')
+  })
+
+  it('warns when sast.yml is missing for node project', async () => {
+    existsSyncMock.mockImplementation((p: string) => {
+      if (String(p).includes('sast.yml')) return false
+      return true
+    })
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'ai-sdlc', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const check = json[0].checks.find((c: { name: string }) => c.name === 'sast workflow')
+    expect(check).toBeDefined()
+    expect(check.status).toBe('warn')
+    expect(check.detail).toContain('missing .github/workflows/sast.yml')
+    expect(check.fixable).toBe(false)
+  })
+
+  it('is skipped for rust projects (CodeQL does not support rust)', async () => {
+    readFileMock.mockResolvedValue(RUST_PROJECT_CONFIG)
+    existsSyncMock.mockReturnValue(true)
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'rust-project', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const checkNames = json[0].checks.map((c: { name: string }) => c.name)
+    expect(checkNames).not.toContain('sast workflow')
+  })
+})
+
 // ─── HELP string mentions ai-sdlc-specific checks (AC#5) ─────────────────────
 
 describe('HELP output', () => {
@@ -282,6 +481,9 @@ describe('HELP output', () => {
     expect(helpOut).toContain('blast-radius.yml')
     expect(helpOut).toContain('pr-labels.yml')
     expect(helpOut).toContain('15 canonical GitHub labels')
+    expect(helpOut).toContain('secret-scan.yml')
+    expect(helpOut).toContain('dep-audit.yml')
+    expect(helpOut).toContain('sast.yml')
   })
 })
 
@@ -308,7 +510,7 @@ describe('ai-sdlc checks skipped for other slugs', () => {
     expect(spawnSyncMock).not.toHaveBeenCalled()
   })
 
-  it('includes exactly 4 checks for non-ai-sdlc projects', async () => {
+  it('includes exactly 7 checks for non-ai-sdlc node projects (4 base + secret-scan + dep-audit + sast)', async () => {
     readFileMock.mockResolvedValue(OTHER_PROJECT_CONFIG)
 
     const output: string[] = []
@@ -320,11 +522,11 @@ describe('ai-sdlc checks skipped for other slugs', () => {
     await runDoctor(['--project', 'other-project', '--json'])
 
     const json = JSON.parse(output.join(''))
-    expect(json[0].checks).toHaveLength(4)
+    expect(json[0].checks).toHaveLength(7)
   })
 
-  it('includes 7 checks for ai-sdlc project', async () => {
-    spawnSyncMock.mockReturnValue(ALL_15_LABELS)
+  it('includes 10 checks for ai-sdlc project (7 base + blast-radius + pr-labels + canonical labels)', async () => {
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: ALL_15_LABELS, stderr: '' })
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
@@ -335,6 +537,23 @@ describe('ai-sdlc checks skipped for other slugs', () => {
     await runDoctor(['--project', 'ai-sdlc', '--json'])
 
     const json = JSON.parse(output.join(''))
-    expect(json[0].checks).toHaveLength(7)
+    expect(json[0].checks).toHaveLength(10)
+  })
+
+  it('skips sast check for rust projects', async () => {
+    readFileMock.mockResolvedValue(RUST_PROJECT_CONFIG)
+    existsSyncMock.mockImplementation((_p: string) => true)
+
+    const output: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
+      output.push(String(s))
+      return true
+    })
+
+    await runDoctor(['--project', 'rust-project', '--json'])
+
+    const json = JSON.parse(output.join(''))
+    const checkNames = json[0].checks.map((c: { name: string }) => c.name)
+    expect(checkNames).not.toContain('sast workflow')
   })
 })
