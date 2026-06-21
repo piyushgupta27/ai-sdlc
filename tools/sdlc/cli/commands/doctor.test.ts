@@ -11,15 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ─── hoist mock refs ─────────────────────────────────────────────────────────
 
-const { execSyncMock, existsSyncMock, readFileMock } = vi.hoisted(() => ({
-  execSyncMock: vi.fn(),
+const { spawnSyncMock, existsSyncMock, readFileMock } = vi.hoisted(() => ({
+  spawnSyncMock: vi.fn(),
   existsSyncMock: vi.fn(),
   readFileMock: vi.fn(),
 }))
 
 // ─── module mocks ────────────────────────────────────────────────────────────
 
-vi.mock('node:child_process', () => ({ execSync: execSyncMock }))
+vi.mock('node:child_process', () => ({ spawnSync: spawnSyncMock }))
 vi.mock('node:fs', () => ({ existsSync: existsSyncMock }))
 vi.mock('node:fs/promises', () => ({
   readFile: readFileMock,
@@ -96,10 +96,10 @@ const OTHER_PROJECT_CONFIG = JSON.stringify({
 beforeEach(() => {
   vi.resetAllMocks()
 
-  // Default: all files present, execSync returns all 15 labels
+  // Default: all files present, spawnSync returns all 15 labels
   existsSyncMock.mockReturnValue(true)
   readFileMock.mockResolvedValue(AI_SDLC_CONFIG)
-  execSyncMock.mockReturnValue(ALL_15_LABELS)
+  spawnSyncMock.mockReturnValue({ status: 0, stdout: ALL_15_LABELS, stderr: '' })
 })
 
 afterEach(() => {
@@ -111,7 +111,7 @@ afterEach(() => {
 describe('blast-radius workflow check', () => {
   it('passes when .github/workflows/blast-radius.yml exists', async () => {
     existsSyncMock.mockImplementation((_p: string) => true)
-    execSyncMock.mockReturnValue(ALL_15_LABELS)
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: ALL_15_LABELS, stderr: '' })
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
@@ -201,7 +201,7 @@ describe('pr-labels workflow check', () => {
 
 describe('canonical labels check', () => {
   it('passes when all 15 labels are present', async () => {
-    execSyncMock.mockReturnValue(ALL_15_LABELS)
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: ALL_15_LABELS, stderr: '' })
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
@@ -220,7 +220,7 @@ describe('canonical labels check', () => {
 
   it('fails and lists missing labels when some are absent', async () => {
     const partial = JSON.stringify([{ name: 'tier:0' }, { name: 'tier:1' }, { name: 'blocked' }])
-    execSyncMock.mockReturnValue(partial)
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: partial, stderr: '' })
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
@@ -241,10 +241,8 @@ describe('canonical labels check', () => {
     expect(code).toBe(1)
   })
 
-  it('warns when gh is unavailable (execSync throws)', async () => {
-    execSyncMock.mockImplementation(() => {
-      throw new Error('gh: command not found')
-    })
+  it('warns when gh is unavailable (non-zero exit)', async () => {
+    spawnSyncMock.mockReturnValue({ status: 127, stdout: '', stderr: 'gh: command not found', error: undefined })
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
@@ -258,7 +256,7 @@ describe('canonical labels check', () => {
     const check = json[0].checks.find((c: { name: string }) => c.name === 'canonical labels')
     expect(check).toBeDefined()
     expect(check.status).toBe('warn')
-    expect(check.detail).toBe('gh unavailable — cannot verify labels')
+    expect(check.detail).toContain('gh unavailable')
   })
 })
 
@@ -302,7 +300,7 @@ describe('ai-sdlc checks skipped for other slugs', () => {
     expect(checkNames).not.toContain('pr-labels workflow')
     expect(checkNames).not.toContain('canonical labels')
     // execSync should never be called for non-ai-sdlc projects
-    expect(execSyncMock).not.toHaveBeenCalled()
+    expect(spawnSyncMock).not.toHaveBeenCalled()
   })
 
   it('includes exactly 4 checks for non-ai-sdlc projects', async () => {
@@ -321,7 +319,7 @@ describe('ai-sdlc checks skipped for other slugs', () => {
   })
 
   it('includes 7 checks for ai-sdlc project', async () => {
-    execSyncMock.mockReturnValue(ALL_15_LABELS)
+    spawnSyncMock.mockReturnValue(ALL_15_LABELS)
 
     const output: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((s) => {

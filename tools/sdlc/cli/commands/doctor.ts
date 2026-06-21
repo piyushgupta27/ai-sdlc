@@ -5,7 +5,7 @@
  * automatable ones. See #41.
  */
 
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -74,29 +74,44 @@ interface ProjectReport {
   readonly checks: readonly CheckResult[]
 }
 
-function checkCanonicalLabels(owner: string, slug: string): CheckResult {
-  try {
-    const raw = execSync(`gh label list --repo ${owner}/${slug} --limit 100 --json name`, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const parsed = JSON.parse(raw) as Array<{ name: string }>
-    const present = new Set(parsed.map((l) => l.name))
-    const missing = CANONICAL_LABELS.filter((l) => !present.has(l))
+function checkCanonicalLabels(owner: string, repoSlug: string): CheckResult {
+  // Use spawnSync with an args array (not a shell template) to avoid shell injection
+  // from owner/repoSlug values read from config.json. Timeout guards against gh blocking
+  // on auth prompts or network stalls. --limit 200 is the gh CLI maximum per page.
+  const r = spawnSync(
+    'gh',
+    ['label', 'list', '--repo', `${owner}/${repoSlug}`, '--limit', '200', '--json', 'name'],
+    { encoding: 'utf8', timeout: 15_000 },
+  )
+  if (r.error || r.status !== 0) {
     return {
       name: 'canonical labels',
-      status: missing.length === 0 ? 'pass' : 'fail',
-      detail:
-        missing.length === 0 ? '15 canonical labels present' : `missing: ${missing.join(', ')}`,
+      status: 'warn',
+      detail: `gh unavailable — cannot verify labels${r.stderr ? `: ${r.stderr.trim()}` : ''}`,
       fixable: false,
     }
+  }
+  let parsed: Array<{ name: string }>
+  try {
+    parsed = JSON.parse(r.stdout) as Array<{ name: string }>
   } catch {
     return {
       name: 'canonical labels',
       status: 'warn',
-      detail: 'gh unavailable — cannot verify labels',
+      detail: 'gh returned unexpected output — cannot verify labels',
       fixable: false,
     }
+  }
+  const present = new Set(parsed.map((l) => l.name))
+  const missing = CANONICAL_LABELS.filter((l) => !present.has(l))
+  return {
+    name: 'canonical labels',
+    status: missing.length === 0 ? 'pass' : 'fail',
+    detail:
+      missing.length === 0
+        ? `${CANONICAL_LABELS.length} canonical labels present`
+        : `missing: ${missing.join(', ')}`,
+    fixable: false,
   }
 }
 
@@ -194,23 +209,25 @@ async function checkProject(slug: ProjectSlug, fix: boolean): Promise<ProjectRep
   if (slug === 'ai-sdlc') {
     // 5. blast-radius workflow
     const brWorkflow = join(repo, '.github', 'workflows', 'blast-radius.yml')
+    const brExists = existsSync(brWorkflow)
     checks.push({
       name: 'blast-radius workflow',
-      status: existsSync(brWorkflow) ? 'pass' : 'fail',
-      detail: existsSync(brWorkflow) ? 'present' : 'missing .github/workflows/blast-radius.yml',
+      status: brExists ? 'pass' : 'fail',
+      detail: brExists ? 'present' : 'missing .github/workflows/blast-radius.yml',
       fixable: false,
     })
 
     // 6. pr-labels workflow
     const prLabelsWorkflow = join(repo, '.github', 'workflows', 'pr-labels.yml')
+    const prLabelsExists = existsSync(prLabelsWorkflow)
     checks.push({
       name: 'pr-labels workflow',
-      status: existsSync(prLabelsWorkflow) ? 'pass' : 'fail',
-      detail: existsSync(prLabelsWorkflow) ? 'present' : 'missing .github/workflows/pr-labels.yml',
+      status: prLabelsExists ? 'pass' : 'fail',
+      detail: prLabelsExists ? 'present' : 'missing .github/workflows/pr-labels.yml',
       fixable: false,
     })
 
-    // 7. 15 canonical GitHub labels
+    // 7. canonical GitHub labels (repoSlug = slug — assumes GitHub repo name matches project slug)
     checks.push(checkCanonicalLabels(cfg.owner, slug))
   }
 
