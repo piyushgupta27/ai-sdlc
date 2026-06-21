@@ -675,12 +675,23 @@ async function maybeCreatePr(args: {
   process.stdout.write(`  ✓ PR opened: ${prResult.stdout.trim()}\n`)
 
   // Apply tier label, assignee, and type labels via gh api (best-effort; non-fatal).
-  // Parse owner/repo/number from the PR URL: https://github.com/{owner}/{repo}/pull/{number}
-  const prUrl = prResult.stdout.trim()
-  const urlParts = prUrl.split('/')
-  const prOwner = urlParts[3]
-  const prRepo = urlParts[4]
-  const prNumber = urlParts.at(-1)
+  // Parse owner/repo/number from the PR URL using URL parser — robust against query strings
+  // and path-prefix variations (split('/')[N] is position-sensitive and breaks on GHE paths).
+  let prOwner: string | undefined
+  let prRepo: string | undefined
+  let prNumber: string | undefined
+  try {
+    const parsed = new URL(prResult.stdout.trim())
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    // pathname for https://github.com/owner/repo/pull/N → ['owner','repo','pull','N']
+    if (parts.length >= 4 && parts[2] === 'pull') {
+      prOwner = parts[0]
+      prRepo = parts[1]
+      prNumber = parts[3]
+    }
+  } catch {
+    // non-URL gh output — skip decoration silently
+  }
 
   if (prOwner && prRepo && prNumber) {
     const issueRef = `repos/${prOwner}/${prRepo}/issues/${prNumber}`
@@ -711,7 +722,9 @@ async function maybeCreatePr(args: {
       }
     }
 
-    const TYPE_KEYWORDS = ['security', 'adhoc', 'dogfood', 'bug', 'enhancement']
+    // Only keywords that correspond to seeded CANONICAL_LABELS — omit 'bug'/'enhancement'
+    // which are not seeded by `sdlc onboard` and would 422 on every onboarded repo.
+    const TYPE_KEYWORDS = ['security', 'adhoc', 'dogfood']
     const searchText = `${args.task.title} ${args.task.description}`
     const typeLabels = TYPE_KEYWORDS.filter((kw) => new RegExp(`\\[${kw}\\]`, 'i').test(searchText))
     for (const label of typeLabels) {
@@ -724,6 +737,8 @@ async function maybeCreatePr(args: {
         process.stderr.write(`  ⚠️  Type label "${label}" failed: ${typeLabelRes.stderr.trim()}\n`)
       }
     }
+  } else {
+    process.stderr.write(`  ⚠️  Could not parse PR URL for label decoration: ${prResult.stdout.trim()}\n`)
   }
 
   return true

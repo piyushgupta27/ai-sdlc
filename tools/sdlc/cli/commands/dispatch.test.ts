@@ -776,7 +776,7 @@ describe('dispatchFromBoard — tier label + assignee applied after PR creation 
 describe('dispatchFromBoard — type label applied from [keyword] in task title (gh-159 AC3)', () => {
   beforeEach(() => {
     vi.mocked(listItems)
-      .mockResolvedValueOnce(ok([{ ...fakeItem, title: 'Fix the bug [bug]' }]))
+      .mockResolvedValueOnce(ok([{ ...fakeItem, title: 'Unplanned interrupt [adhoc]' }]))
       .mockResolvedValue(ok([]))
     vi.mocked(runTask).mockResolvedValue(ok(makeOutcome('merged', 'abc123', 'feature/gh-1')))
   })
@@ -788,7 +788,7 @@ describe('dispatchFromBoard — type label applied from [keyword] in task title 
       .mockReturnValueOnce(makeChildProcess(0, 'https://github.com/org/repo/pull/5\n')) // gh pr create
       .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api tier label
       .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api assignees
-      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api type label 'bug'
+      .mockReturnValueOnce(makeChildProcess(0, '{}')) // gh api type label 'adhoc'
 
     const code = await runDispatch(ARGV)
 
@@ -801,7 +801,7 @@ describe('dispatchFromBoard — type label applied from [keyword] in task title 
         'POST',
         'repos/org/repo/issues/5/labels',
         '-f',
-        'labels[]=bug',
+        'labels[]=adhoc',
       ]),
       expect.anything(),
     )
