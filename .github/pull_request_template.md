@@ -49,6 +49,7 @@ _The problem, the change, and the key trade-off — in prose. A reviewer should 
 ## 4 · Evidence
 
 - **Gates** — typecheck · lint · format · tests <pass/total> · coverage <%>.
+- [ ] secret-scan ✓ · dep-audit ✓ · SAST (CodeQL) ✓
 - **Acceptance criteria** — each AC mapped to its evidence (test / `file:line`), or "n/a".
 - **Tests** — happy + sad + edge paths covered (what each asserts).
 - **CHECKER** — verdict · confidence · deficiencies resolved (or n/a).
