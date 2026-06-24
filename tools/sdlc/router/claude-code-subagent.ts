@@ -50,6 +50,13 @@ export interface DispatchOpts {
   readonly noProgressSec?: number
   /** Optional: BLAST_RADIUS_APPROVED env passthrough for Red zone writes */
   readonly blastRadiusApproved?: string
+  /**
+   * Scoped tool grant for this dispatch. Defaults to ALLOWED_AGENT_TOOLS
+   * (Read,Glob,Grep,Edit,Write,Bash). Set by base.ts for read-only roles
+   * (reviewer: Read,Glob,Grep; checker: Read,Glob,Grep + git-inspect Bash)
+   * so those agents can never Write/Edit regardless of prompt injection.
+   */
+  readonly allowedTools?: string
 }
 
 /**
@@ -262,7 +269,7 @@ export class ClaudeCodeCliTransport implements SubagentTransport {
         // Defense-in-depth is the platform's own guardrails: blast-radius
         // pre-commit hook, Red-zone tiers, HITL gates, and the CHECKER.
         '--allowedTools',
-        ALLOWED_AGENT_TOOLS,
+        opts.allowedTools ?? ALLOWED_AGENT_TOOLS,
         '--append-system-prompt',
         opts.systemPrompt,
         opts.userMessage,

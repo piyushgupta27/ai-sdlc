@@ -270,3 +270,61 @@ describe('#77 — one-shot re-prompt on agent.invalid-response', () => {
     expect(callCount).toBe(1) // no second dispatch
   })
 })
+
+describe('role-based tool scoping (G1)', () => {
+  const PROSE_RESPONSE = 'The task looks good.'
+
+  it('reviewer dispatch gets Read,Glob,Grep only — no Write, Edit, or Bash', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport: t })
+    const tools = captured[0]?.allowedTools ?? ''
+    expect(tools).toContain('Read')
+    expect(tools).toContain('Grep')
+    expect(tools).not.toContain('Write')
+    expect(tools).not.toContain('Edit')
+    expect(tools).not.toContain('Bash')
+  })
+
+  it('checker dispatch gets git-inspect Bash but not Write or Edit', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'checker', brief: BASE_BRIEF, tier: 2, transport: t })
+    const tools = captured[0]?.allowedTools ?? ''
+    expect(tools).toContain('Read')
+    expect(tools).toContain('Bash(git show:*)')
+    expect(tools).toContain('Bash(git diff:*)')
+    expect(tools).not.toContain('Write')
+    expect(tools).not.toContain('Edit')
+  })
+
+  it('builder dispatch passes no allowedTools override — transport defaults apply', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'builder', brief: BASE_BRIEF, tier: 2, transport: t })
+    expect(captured[0]?.allowedTools).toBeUndefined()
+  })
+
+  it('reviewer re-prompt dispatch ALSO gets the restricted tool set — no bypass via prose re-prompt', async () => {
+    const captured: DispatchOpts[] = []
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async (opts) => {
+        callCount++
+        captured.push(opts)
+        const rawText = callCount === 1 ? PROSE_RESPONSE : SUCCESS_ENVELOPE
+        return {
+          ok: true as const,
+          value: { rawText, tokens: { input: 10, output: 20 }, durationMs: 100, costUsd: 0.001 },
+        }
+      }),
+    }
+    await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(callCount).toBe(2)
+    for (const d of captured) {
+      expect(d.allowedTools).not.toContain('Write')
+      expect(d.allowedTools).not.toContain('Edit')
+      expect(d.allowedTools).not.toContain('Bash')
+    }
+  })
+})
