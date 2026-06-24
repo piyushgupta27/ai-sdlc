@@ -14,6 +14,8 @@
  */
 
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { AuditValidations } from '../types/index.js'
 
 /** Per-project deterministic commands, run as shell strings in the target repo. */
@@ -106,4 +108,30 @@ export async function runValidations(
 /** True if any deterministic check in the matrix failed — the H1 hard gate. */
 export function hasDeterministicFailure(v: AuditValidations): boolean {
   return Object.values(v).some((status) => status === 'fail')
+}
+
+const VITEST_CONFIGS = ['vitest.config.ts', 'vitest.config.js', 'vitest.config.mts'] as const
+
+/**
+ * Return a copy of `commands` with the test command safe for worktree execution.
+ *
+ * Vitest config may include reporters (e.g. tdd-guard-vitest) that require
+ * services only present in the main workspace — not in the isolated git worktree
+ * dispatch creates per task. Appending `-- --reporter=default` causes vitest to
+ * replace the config reporters array with just the built-in default reporter,
+ * bypassing any per-repo custom reporters. CLI `--reporter` takes full precedence
+ * over the config `reporters` array (verified in vitest source coverage.DfSpMS-b.js
+ * line ~3850: `resolved.reporters = cliReporters` replaces, does not append).
+ *
+ * No-op when the repo does not use vitest (preserves Jest/Mocha/other commands
+ * unchanged — those runners have different `--reporter` semantics). (#152)
+ */
+export function asWorktreeCommands(
+  commands: ValidationCommands,
+  repoPath: string,
+): ValidationCommands {
+  if (!commands.test) return commands
+  const hasVitest = VITEST_CONFIGS.some((cfg) => existsSync(join(repoPath, cfg)))
+  if (!hasVitest) return commands
+  return { ...commands, test: `${commands.test} -- --reporter=default` }
 }

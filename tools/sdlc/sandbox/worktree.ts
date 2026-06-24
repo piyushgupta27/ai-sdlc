@@ -254,11 +254,33 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
 
   const workspacePath = join(repoPath, SANDBOX_DIRNAME, sanitizeTaskId(taskId))
 
-  // Base off the freshest MERGED tip (#100): fetch + prefer origin/<branch>, so
-  // a stale local branch can't seed a divergent base. Done outside the lock —
-  // a fetch updates remote-tracking refs and doesn't contend on worktree admin.
-  const base = await resolveBaseRef(repoPath, requestedBaseRef)
-  if (base.note) process.stderr.write(`  ⚠️  ${base.note}\n`)
+  let base: { ref: string; note?: string }
+  if (req.existingBranch) {
+    // CI-fix re-dispatch: fetch the branch from origin so the remote-tracking ref
+    // is fresh. Apply the same timeout as resolveBaseRef — a TCP-blackhole remote
+    // must not hang the background ci-monitor process indefinitely.
+    const fetch = await runGit(
+      ['-C', repoPath, '-c', 'http.connectTimeout=10', 'fetch', 'origin', branch],
+      undefined,
+      FETCH_TIMEOUT_MS,
+    )
+    if (fetch.code !== 0) {
+      return err(
+        makeError(
+          'sandbox.fetch_failed',
+          `git fetch origin/${branch} failed: ${fetch.stderr.trim()}`,
+          {
+            fix: `Verify the branch '${branch}' exists on origin and the repo is reachable. Check 'git fetch origin ${branch}' manually.`,
+          },
+        ),
+      )
+    }
+    base = { ref: `origin/${branch}` }
+  } else {
+    // Normal dispatch: base off the freshest MERGED tip (#100).
+    base = await resolveBaseRef(repoPath, requestedBaseRef)
+    if (base.note) process.stderr.write(`  ⚠️  ${base.note}\n`)
+  }
 
   // Preclean + the worktree add mutate the repo's worktree admin — serialize
   // them so concurrent provisions don't contend on the repo lock. --no-checkout
@@ -266,8 +288,33 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
   // filter runs on checkout.
   const add = await withGitMutationLock(async () => {
     ensureSandboxExcluded(repoPath)
-    await precleanStale(repoPath, workspacePath, branch)
+    if (req.existingBranch) {
+      // Prune + remove any stale worktree at this path WITHOUT deleting the PR
+      // branch (which precleanStale would do). `-B` below recreates from origin
+      // regardless, so no explicit local branch management is needed.
+      await runGit(['-C', repoPath, 'worktree', 'prune'])
+      if (existsSync(workspacePath)) {
+        await runGit(['-C', repoPath, 'worktree', 'remove', '--force', workspacePath])
+      }
+      await runGit(['-C', repoPath, 'worktree', 'prune'])
+    } else {
+      await precleanStale(repoPath, workspacePath, branch)
+    }
     mkdirSync(dirname(workspacePath), { recursive: true })
+    if (req.existingBranch) {
+      // -B force-resets the local branch to origin/<branch>, creating it if absent.
+      return runGit([
+        '-C',
+        repoPath,
+        'worktree',
+        'add',
+        '--no-checkout',
+        '-B',
+        branch,
+        workspacePath,
+        `origin/${branch}`,
+      ])
+    }
     return runGit([
       '-C',
       repoPath,
@@ -283,7 +330,9 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
   if (add.code !== 0) {
     return err(
       makeError('sandbox.worktree_add_failed', `git worktree add failed: ${add.stderr.trim()}`, {
-        fix: `The branch '${branch}' may already exist from a prior run (possibly with an open PR), a concurrent run may hold it, or the worktree dir is dirty. Resolve/merge that PR or delete the branch, then retry. Check 'git worktree list' + 'git branch'.`,
+        fix: req.existingBranch
+          ? `Could not check out branch '${branch}' from origin. Verify the branch exists on origin and is fetchable. Check 'git worktree list'.`
+          : `The branch '${branch}' may already exist from a prior run (possibly with an open PR), a concurrent run may hold it, or the worktree dir is dirty. Resolve/merge that PR or delete the branch, then retry. Check 'git worktree list' + 'git branch'.`,
       }),
     )
   }

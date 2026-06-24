@@ -48,6 +48,7 @@ vi.mock('../../orchestrator/index.js', () => ({
 vi.mock('../../orchestrator/validations.js', () => ({
   runValidations: vi.fn(),
   hasDeterministicFailure: vi.fn(),
+  asWorktreeCommands: vi.fn((cmds: unknown) => cmds),
 }))
 vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
@@ -120,9 +121,11 @@ function makeChildProcess(code: number, stdoutStr = '', stderrStr = '') {
   const proc = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
+    unref: () => void
   }
   proc.stdout = new EventEmitter()
   proc.stderr = new EventEmitter()
+  proc.unref = () => {}
   setImmediate(() => {
     if (stdoutStr) proc.stdout.emit('data', Buffer.from(stdoutStr))
     if (stderrStr) proc.stderr.emit('data', Buffer.from(stderrStr))

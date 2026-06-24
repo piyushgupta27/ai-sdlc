@@ -58,7 +58,12 @@ import { shouldRefire, shouldRetry, shouldRetryOnTimeout } from './retry-policy.
 import { projectDir } from './state.js'
 import { readState, updateState } from './state.js'
 import { requiresCommitHitl, trustGateReason } from './trust-gate.js'
-import { type ValidationCommands, hasDeterministicFailure, runValidations } from './validations.js'
+import {
+  type ValidationCommands,
+  asWorktreeCommands,
+  hasDeterministicFailure,
+  runValidations,
+} from './validations.js'
 
 /**
  * Outcome of running ONE task end-to-end through the pipeline.
@@ -131,6 +136,11 @@ export async function runTask(opts: {
   // their pre-commit self-check, not a hardcoded `pnpm run` under the CLI's
   // runtime. Loaded once; threaded into every BUILD/TEST payload below.
   const validationCommands = await loadValidationCommands(opts.project)
+  // Worktree-safe variant: bypasses per-repo vitest reporters (e.g. tdd-guard-vitest)
+  // that require services only present in the main workspace. (#152)
+  const wtCommands = validationCommands
+    ? asWorktreeCommands(validationCommands, opts.targetRepo)
+    : undefined
 
   // ─── Iteration loop ──────────────────────────────────────────────────────
   // Timeout retries are tracked per-stage, independently of the code-quality
@@ -155,7 +165,7 @@ export async function runTask(opts: {
           acceptanceCriteria: opts.task.dod.acceptanceCriteria,
           tier,
           branch: opts.branch,
-          ...(validationCommands ? { validationCommands } : {}),
+          ...(wtCommands ? { validationCommands: wtCommands } : {}),
           ...(isRetry ? { reviewerFeedback: 'See previous REVIEWER comments' } : {}),
         },
       },
@@ -191,7 +201,7 @@ export async function runTask(opts: {
             acceptanceCriteria: opts.task.dod.acceptanceCriteria,
             tier,
             branch: opts.branch,
-            ...(validationCommands ? { validationCommands } : {}),
+            ...(wtCommands ? { validationCommands: wtCommands } : {}),
             ...(isRetry ? { reviewerFeedback: 'See previous REVIEWER comments' } : {}),
             ...(buildNudge ? { timeoutNudge: buildNudge } : {}),
           },
@@ -257,7 +267,7 @@ export async function runTask(opts: {
           commitSha: buildOutput.commitSha,
           acceptanceCriteria: opts.task.dod.acceptanceCriteria,
           coverageFloor: opts.task.dod.coverageFloor,
-          ...(validationCommands ? { validationCommands } : {}),
+          ...(wtCommands ? { validationCommands: wtCommands } : {}),
         },
       },
       { tier, isRetry },
@@ -285,7 +295,7 @@ export async function runTask(opts: {
             commitSha: buildOutput.commitSha,
             acceptanceCriteria: opts.task.dod.acceptanceCriteria,
             coverageFloor: opts.task.dod.coverageFloor,
-            ...(validationCommands ? { validationCommands } : {}),
+            ...(wtCommands ? { validationCommands: wtCommands } : {}),
             ...(testNudge ? { timeoutNudge: testNudge } : {}),
           },
         },
@@ -467,13 +477,14 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
     branch: ctx.branch,
   }
   const commands = await loadValidationCommands(ctx.project)
+  const wtCommands = commands ? asWorktreeCommands(commands, ctx.targetRepo) : undefined
   const refireHistory: AuditDecision[] = []
   let priorDeficiencies: Deficiency[] = []
   let refiresUsed = 0
 
   for (;;) {
     // (1) deterministic re-verify — H1 [D]
-    const { validations, details } = await runValidations(ctx.targetRepo, commands)
+    const { validations, details } = await runValidations(ctx.targetRepo, wtCommands)
     const detFailed = hasDeterministicFailure(validations)
 
     // (2) CHECKER semantic audit — [C]
@@ -587,7 +598,7 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
       )
     }
 
-    const refire = await refireOwningProducers(ctx, opts, actionable, commands)
+    const refire = await refireOwningProducers(ctx, opts, actionable, wtCommands)
     if (!refire.ok) {
       return await finalizeFailure(
         opts,
@@ -616,7 +627,7 @@ async function refireOwningProducers(
   ctx: CheckGateCtx,
   opts: { project: ProjectSlug; task: Task; targetRepo: string; branch: string },
   deficiencies: readonly Deficiency[],
-  commands: ValidationCommands | undefined,
+  wtCommands: ValidationCommands | undefined,
 ): Promise<Result<{ whatChanged: string }, AppError>> {
   const byOwner = new Map<DeficiencyOwner, Deficiency[]>()
   for (const d of deficiencies) {
@@ -643,7 +654,7 @@ async function refireOwningProducers(
             acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
             tier: ctx.tier,
             branch: ctx.branch,
-            ...(commands ? { validationCommands: commands } : {}),
+            ...(wtCommands ? { validationCommands: wtCommands } : {}),
             deficiencies: defs,
           },
         },
@@ -670,7 +681,7 @@ async function refireOwningProducers(
             commitSha: ctx.buildOutput.commitSha,
             acceptanceCriteria: ctx.task.dod.acceptanceCriteria,
             coverageFloor: ctx.task.dod.coverageFloor,
-            ...(commands ? { validationCommands: commands } : {}),
+            ...(wtCommands ? { validationCommands: wtCommands } : {}),
             deficiencies: defs,
           },
         },
