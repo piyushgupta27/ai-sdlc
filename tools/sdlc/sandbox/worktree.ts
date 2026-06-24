@@ -256,10 +256,25 @@ export async function provisionWorktreeSandbox(req: SandboxRequest): Promise<Res
 
   let base: { ref: string; note?: string }
   if (req.existingBranch) {
-    // CI-fix re-dispatch: the branch already exists on origin. Fetch it explicitly
-    // so the remote-tracking ref is fresh; no base branch resolution needed.
-    const fetch = await runGit(['-C', repoPath, 'fetch', 'origin', branch])
-    if (fetch.code !== 0) process.stderr.write(`  ⚠️  fetch origin/${branch} failed\n`)
+    // CI-fix re-dispatch: fetch the branch from origin so the remote-tracking ref
+    // is fresh. Apply the same timeout as resolveBaseRef — a TCP-blackhole remote
+    // must not hang the background ci-monitor process indefinitely.
+    const fetch = await runGit(
+      ['-C', repoPath, '-c', 'http.connectTimeout=10', 'fetch', 'origin', branch],
+      undefined,
+      FETCH_TIMEOUT_MS,
+    )
+    if (fetch.code !== 0) {
+      return err(
+        makeError(
+          'sandbox.fetch_failed',
+          `git fetch origin/${branch} failed: ${fetch.stderr.trim()}`,
+          {
+            fix: `Verify the branch '${branch}' exists on origin and the repo is reachable. Check 'git fetch origin ${branch}' manually.`,
+          },
+        ),
+      )
+    }
     base = { ref: `origin/${branch}` }
   } else {
     // Normal dispatch: base off the freshest MERGED tip (#100).

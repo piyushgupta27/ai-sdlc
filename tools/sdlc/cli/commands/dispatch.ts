@@ -881,6 +881,10 @@ export async function dispatchCiFixTask(args: {
     })
     if (!result.ok) return null
     if (result.value.result !== 'merged') return null
+    // Guard: if BUILDER made no new commit (vacuous success), commitSha is absent.
+    // git rev-parse HEAD would return the pre-existing SHA and push would be a no-op,
+    // causing ci-monitor to re-poll the unchanged SHA and falsely log a phantom fix.
+    if (!result.value.commitSha) return null
 
     // Capture SHA before cleanup tears down the worktree
     const shaR = await runShell('git', ['rev-parse', 'HEAD'], sandbox.value.workspacePath)

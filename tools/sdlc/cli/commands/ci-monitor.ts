@@ -150,6 +150,7 @@ function runCmd(
       stderr += b.toString('utf8')
     })
     child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+    child.on('error', () => resolve({ code: 1, stdout, stderr: 'spawn failed' }))
   })
 }
 
@@ -284,7 +285,8 @@ export async function runCiMonitor(argv: readonly string[]): Promise<number> {
   const { owner, repo, sha, prNumber, prUrl, branch, tier, webhookTopic } = parsed
   const ntfyCfg: NtfyConfig | null = webhookTopic ? { topic: webhookTopic } : null
   const logFile = join(tmpdir(), `sdlc-ci-${owner}-${repo}-${prNumber}.log`)
-  const taskTier = (Number.parseInt(tier ?? '2', 10) || 2) as Tier
+  const tierNum = Number.parseInt(tier ?? '2', 10)
+  const taskTier = (Number.isNaN(tierNum) ? 2 : tierNum) as Tier
   const slug = asProjectSlug(parsed.slug)
 
   async function log(msg: string): Promise<void> {
