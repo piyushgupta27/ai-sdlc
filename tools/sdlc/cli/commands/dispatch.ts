@@ -346,6 +346,8 @@ async function dispatchFromBoard(
             costUsd: outcome.costUsd,
             retriesUsed: outcome.retriesUsed,
             ...(cfg.validationCommands ? { validationCommands: cfg.validationCommands } : {}),
+            baseRepoPath: cfg.repoPath,
+            ...(webhookTopic ? { webhookTopic } : {}),
           })
           if (prOk) {
             await moveItem(project.value, next.id, 'Done')
@@ -560,6 +562,8 @@ async function maybeCreatePr(args: {
   readonly costUsd: number
   readonly retriesUsed: number
   readonly validationCommands?: ValidationCommands
+  readonly baseRepoPath?: string
+  readonly webhookTopic?: string
 }): Promise<boolean> {
   // Pre-PR gate (#112): re-run the project's own checks in the worktree before
   // pushing. This is a hard block regardless of tier or trust — a PR with red CI
@@ -698,6 +702,39 @@ async function maybeCreatePr(args: {
   }
 
   if (prOwner && prRepo && prNumber) {
+    // Spawn detached CI monitor — non-blocking (issue #180). Dispatch returns
+    // immediately; the background process polls check-runs, auto-fixes biome
+    // violations, and opens GitHub issues for other failures.
+    if (args.baseRepoPath && process.argv[1]) {
+      const monitorArgv = [
+        '--owner',
+        prOwner,
+        '--repo',
+        prRepo,
+        '--sha',
+        args.commitSha,
+        '--pr-number',
+        prNumber,
+        '--slug',
+        String(args.slug),
+        '--pr-url',
+        prResult.stdout.trim(),
+        '--base-repo-path',
+        args.baseRepoPath,
+        '--branch',
+        args.branch,
+        '--tier',
+        String(args.task.tier),
+        ...(args.webhookTopic ? ['--webhook-topic', args.webhookTopic] : []),
+      ]
+      const monitor = spawn(
+        process.execPath,
+        [...process.execArgv, process.argv[1], 'ci-monitor', ...monitorArgv],
+        { detached: true, stdio: 'ignore' },
+      )
+      monitor.unref()
+    }
+
     const issueRef = `repos/${prOwner}/${prRepo}/issues/${prNumber}`
 
     const tierLabelRes = await runShell(
@@ -748,6 +785,116 @@ async function maybeCreatePr(args: {
   }
 
   return true
+}
+
+// ─── CI-fix re-dispatch (issue #180 B1) ──────────────────────────────────────
+
+/**
+ * Provision a worktree on the EXISTING PR branch, run BUILDER to fix CI
+ * failures, push the fix to origin, and return the new HEAD SHA.
+ *
+ * Called in-process by the detached ci-monitor background process.
+ * Returns null if any step fails (budget/pacing gate, sandbox error,
+ * BUILDER failure, trust-gate pause, push failure).
+ */
+export async function dispatchCiFixTask(args: {
+  readonly slug: ProjectSlug
+  readonly branch: string
+  readonly prNumber: number
+  readonly taskTier: Tier
+  readonly failures: ReadonlyArray<{
+    readonly name: string
+    readonly conclusion: string | null
+    readonly summary: string | null
+  }>
+}): Promise<string | null> {
+  const cfg = await readConfig(args.slug)
+  if (!cfg) return null
+
+  const gate = await budgetGate(new Date(), undefined)
+  if (gate.action === 'pause') return null
+
+  const pacing = await pacingGate(new Date(), args.taskTier, undefined)
+  if (pacing.action === 'pause') return null
+
+  const taskId = `ci-fix-${args.prNumber}`
+  const failureList = args.failures
+    .map((f) => `### ${f.name} (${f.conclusion ?? 'failed'})\n${f.summary ?? '(no output)'}`)
+    .join('\n\n')
+  const now = new Date().toISOString()
+
+  const task: Task = {
+    project: args.slug,
+    id: taskId,
+    storyId: taskId,
+    epicId: taskId,
+    title: `[ci-fix] Fix CI failures on PR branch ${args.branch}`,
+    description: [
+      '## CI Fix Required',
+      '',
+      `PR #${args.prNumber} has failing CI checks on branch \`${args.branch}\`. Fix the code so all CI checks pass.`,
+      '',
+      failureList,
+      '',
+      '## Constraints',
+      '- Commit to the EXISTING branch — do not create a new branch',
+      '- Fix only what the CI checks require — no unrelated changes',
+    ].join('\n'),
+    tier: args.taskTier,
+    dod: {
+      acceptanceCriteria: args.failures.map((f) => `${f.name} CI check passes`),
+      nfr: [],
+      testsRequired: ['unit'],
+      coverageFloor: args.taskTier <= 1 ? 85 : 70,
+      contextUpdates: [],
+      requiresAdr: false,
+    },
+    estimatedCostUsd: 0.5,
+    dependsOn: [],
+    blocks: [],
+    expectedFiles: [],
+    stage: 'PLAN',
+    status: 'planned',
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const sandbox = await provisionWorktreeSandbox({
+    repoPath: cfg.repoPath,
+    taskId,
+    branch: args.branch,
+    existingBranch: true,
+  })
+  if (!sandbox.ok) return null
+
+  let newSha: string | null = null
+  try {
+    const result = await runTask({
+      project: args.slug,
+      task,
+      targetRepo: sandbox.value.workspacePath,
+      branch: args.branch,
+      // Autonomous CI-fix path: enforce the trust gate — this is unsupervised push
+      // onto an open PR branch. The trust ladder decides COMMIT vs. HITL pause.
+      // CAUTION: never set this to false here; see the comment on dispatchManualSpec.
+      enforceTrustGate: true,
+    })
+    if (!result.ok) return null
+    if (result.value.result !== 'merged') return null
+
+    // Capture SHA before cleanup tears down the worktree
+    const shaR = await runShell('git', ['rev-parse', 'HEAD'], sandbox.value.workspacePath)
+    if (shaR.code !== 0) return null
+    const sha = shaR.stdout.trim()
+
+    const push = await runShell('git', ['push', 'origin', args.branch], sandbox.value.workspacePath)
+    if (push.code !== 0) return null
+
+    newSha = sha
+    return newSha
+  } finally {
+    await sandbox.value.cleanup()
+  }
 }
 
 // ─── PR body builder ─────────────────────────────────────────────────────────

@@ -27,8 +27,16 @@ export interface SandboxRequest {
    * callers should pass the integration branch explicitly, because `HEAD`
    * resolves against whatever branch the source checkout happens to be on (the
    * exact wrong-branch hazard this sandbox exists to prevent).
+   *
+   * Ignored when `existingBranch` is true.
    */
   readonly baseRef?: string
+  /**
+   * When true, check out an existing remote branch rather than creating a new one.
+   * The branch must already exist on `origin`. Used by the CI-fix re-dispatch
+   * path so BUILDER can commit a fix onto an open PR's branch and push it.
+   */
+  readonly existingBranch?: boolean
 }
 
 /** A provisioned, isolated workspace. */

@@ -18,6 +18,7 @@
  */
 
 import { runBoard } from './commands/board.js'
+import { runCiMonitor } from './commands/ci-monitor.js'
 import { runDashboard } from './commands/dashboard.js'
 import { runDispatch } from './commands/dispatch.js'
 import { runDoctor } from './commands/doctor.js'
@@ -60,6 +61,7 @@ const COMMANDS: Record<string, CommandHandler> = {
   status: runStatus,
   board: runBoard,
   dashboard: runDashboard,
+  'ci-monitor': runCiMonitor,
 }
 
 async function main(): Promise<number> {
