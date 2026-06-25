@@ -70,7 +70,7 @@ import { listProjects, projectDir } from './state.js'
  * Max-plan quota, so this is a placeholder to be tuned: if dispatch hits the rate
  * limit before the brake pauses, LOWER this (the design's "revise the cap if we
  * hit the rate limit earlier than estimated"). Override: `SDLC_WINDOW_TOKEN_BUDGET`
- * or per-project `sdlc_window_token_budget` in config.json.
+ * or per-project `sdlcWindowTokenBudget` in config.json.
  *
  * Raised from 20M to 30M to better serve solo AI testbed projects that run
  * denser per-session token usage than the original team-sized calibration.
