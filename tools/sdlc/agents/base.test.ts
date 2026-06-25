@@ -270,3 +270,51 @@ describe('#77 — one-shot re-prompt on agent.invalid-response', () => {
     expect(callCount).toBe(1) // no second dispatch
   })
 })
+
+describe('role-based tool scoping (G1)', () => {
+  const PROSE_RESPONSE = 'The task looks good.'
+
+  it('reviewer dispatch gets Read,Glob,Grep only — exact grant, no Write/Edit/Bash', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport: t })
+    expect(captured[0]?.allowedTools).toBe('Read,Glob,Grep')
+  })
+
+  it('checker dispatch gets git-inspect-only Bash — exact grant, no Write or Edit', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'checker', brief: BASE_BRIEF, tier: 2, transport: t })
+    expect(captured[0]?.allowedTools).toBe(
+      'Read,Glob,Grep,Bash(git show:*),Bash(git diff:*),Bash(git log:*)',
+    )
+  })
+
+  it('builder dispatch passes no allowedTools override — transport defaults apply', async () => {
+    const captured: DispatchOpts[] = []
+    const t = makeTransport((o) => captured.push(o))
+    await runAgent({ role: 'builder', brief: BASE_BRIEF, tier: 2, transport: t })
+    expect(captured[0]?.allowedTools).toBeUndefined()
+  })
+
+  it('reviewer re-prompt dispatch ALSO gets the restricted tool set — no bypass via prose re-prompt', async () => {
+    const captured: DispatchOpts[] = []
+    let callCount = 0
+    const transport: SubagentTransport = {
+      dispatch: vi.fn(async (opts) => {
+        callCount++
+        captured.push(opts)
+        const rawText = callCount === 1 ? PROSE_RESPONSE : SUCCESS_ENVELOPE
+        return {
+          ok: true as const,
+          value: { rawText, tokens: { input: 10, output: 20 }, durationMs: 100, costUsd: 0.001 },
+        }
+      }),
+    }
+    await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
+    expect(callCount).toBe(2)
+    for (const d of captured) {
+      expect(d.allowedTools).toBe('Read,Glob,Grep')
+    }
+  })
+})

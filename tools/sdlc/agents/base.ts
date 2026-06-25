@@ -105,6 +105,11 @@ export async function runAgent<TPayload, TOutput>(
   const userMessage = buildUserMessage(opts.role, opts.brief)
 
   // 4. Dispatch
+  // G1: restrict tool grant for read-only roles so Write/Edit/Bash are unavailable
+  // regardless of what the agent's prompt or user message says. Computed once and
+  // applied to BOTH the primary dispatch and the #77 re-prompt so neither path
+  // can bypass the restriction.
+  const allowedTools = READONLY_ROLE_TOOLS[opts.role]
   const transport = opts.transport ?? defaultTransport
   const dispatchResult = await transport.dispatch({
     userMessage,
@@ -120,6 +125,7 @@ export async function runAgent<TPayload, TOutput>(
     // within noProgressSec or be killed as stalled. Read-only roles (reviewer/checker)
     // omit this — they legitimately read many files before returning JSON output.
     ...(MUTATING_ROLES.has(opts.role) ? { noProgressSec: noProgressSecForTier(opts.tier) } : {}),
+    ...(allowedTools !== undefined ? { allowedTools } : {}),
     ...(opts.brief.blastRadiusApproved
       ? { blastRadiusApproved: opts.brief.blastRadiusApproved }
       : {}),
@@ -144,6 +150,7 @@ export async function runAgent<TPayload, TOutput>(
       temperature: route.temperature,
       cwd: opts.brief.targetRepo,
       ceilingSec: 600,
+      ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(opts.brief.blastRadiusApproved
         ? { blastRadiusApproved: opts.brief.blastRadiusApproved }
         : {}),
@@ -198,6 +205,22 @@ function ceilingSecForTier(tier: number, isComplex?: boolean): number {
 
 /** Roles that write files and benefit from the progress watchdog (#125). */
 const MUTATING_ROLES: ReadonlySet<V1AgentRole> = new Set(['builder', 'tester'])
+
+/**
+ * Scoped tool grants for read-only roles (G1 security fix). Any role not in
+ * this map receives the transport's default (ALLOWED_AGENT_TOOLS =
+ * Read,Glob,Grep,Edit,Write,Bash).
+ *
+ * - reviewer: file reads only — no writes, no shell (prompts/reviewer/v1.md
+ *   makes no mention of Bash/git; it only reads and reasons).
+ * - checker: file reads + git-inspect Bash only (prompts/checker/v1.md line 19:
+ *   "You may `git show` / read files to inspect the diff"). Granular Bash
+ *   scoping blocks arbitrary shell while allowing diff inspection.
+ */
+const READONLY_ROLE_TOOLS: Partial<Record<V1AgentRole, string>> = {
+  reviewer: 'Read,Glob,Grep',
+  checker: 'Read,Glob,Grep,Bash(git show:*),Bash(git diff:*),Bash(git log:*)',
+}
 
 /**
  * Seconds without Write/Edit/Bash before the progress watchdog fires, sized

@@ -540,6 +540,48 @@ describe('ClaudeCodeCliTransport progress watchdog (#125)', () => {
   })
 })
 
+describe('ClaudeCodeCliTransport --allowedTools arg', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('passes opts.allowedTools to the CLI when set (left side of ?? exercised)', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch({ ...DISPATCH, allowedTools: 'Read,Glob,Grep' })
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'result', is_error: false, result: 'ok', total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+      ),
+    )
+    child.emit('close', 0)
+    await p
+    const spawnArgs = vi.mocked(spawn).mock.calls[0]?.[1] as string[]
+    const idx = spawnArgs.indexOf('--allowedTools')
+    expect(idx).toBeGreaterThan(-1)
+    expect(spawnArgs[idx + 1]).toBe('Read,Glob,Grep')
+  })
+
+  it('falls back to ALLOWED_AGENT_TOOLS when allowedTools is not set (right side of ?? exercised)', async () => {
+    const child = makeFakeChild()
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const p = new ClaudeCodeCliTransport().dispatch(DISPATCH)
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'result', is_error: false, result: 'ok', total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+      ),
+    )
+    child.emit('close', 0)
+    await p
+    const spawnArgs = vi.mocked(spawn).mock.calls[0]?.[1] as string[]
+    const idx = spawnArgs.indexOf('--allowedTools')
+    expect(idx).toBeGreaterThan(-1)
+    expect(spawnArgs[idx + 1]).toBe('Read,Glob,Grep,Edit,Write,Bash')
+  })
+})
+
 describe('isSubagentTimeoutCause', () => {
   it('accepts a well-formed timeout cause', () => {
     expect(
