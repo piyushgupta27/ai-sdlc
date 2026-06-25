@@ -918,19 +918,19 @@ describe('dispatchFromBoard — type label applied from [keyword] in task title 
 
 // ─── Suite 9 (gh-129): per-project budget override + approaching-cap warning ──
 
-describe('dispatchFromBoard — pacing: sdlc_window_token_budget + warningSoon (gh-129)', () => {
+describe('dispatchFromBoard — pacing: sdlcWindowTokenBudget + warningSoon (gh-129)', () => {
   beforeEach(() => {
     vi.mocked(listItems)
       .mockResolvedValueOnce(ok([fakeItem]))
       .mockResolvedValue(ok([]))
   })
 
-  it('passes sdlc_window_token_budget from config.json to pacingGate as projectBudgetOverride (AC1)', async () => {
+  it('passes sdlcWindowTokenBudget from config.json to pacingGate as projectBudgetOverride (AC1)', async () => {
     readFileMock.mockResolvedValue(
       JSON.stringify({
         repoPath: '/fake/repo',
         owner: 'fakeowner',
-        sdlc_window_token_budget: 5_000_000,
+        sdlcWindowTokenBudget: 5_000_000,
       }),
     )
     await runDispatch(ARGV)
@@ -942,8 +942,8 @@ describe('dispatchFromBoard — pacing: sdlc_window_token_budget + warningSoon (
     )
   })
 
-  it('passes undefined projectBudgetOverride when sdlc_window_token_budget is absent (AC1 negative)', async () => {
-    // default readFileMock: { repoPath, owner } — no sdlc_window_token_budget
+  it('passes undefined projectBudgetOverride when sdlcWindowTokenBudget is absent (AC1 negative)', async () => {
+    // default readFileMock: { repoPath, owner } — no sdlcWindowTokenBudget
     await runDispatch(ARGV)
     expect(pacingGateMock).toHaveBeenCalledWith(expect.any(Date), 2, undefined, undefined)
   })
@@ -1062,7 +1062,7 @@ describe('dispatchCiFixTask', () => {
       JSON.stringify({
         repoPath: '/fake/repo',
         owner: 'fakeowner',
-        sdlc_window_token_budget: 5_000_000,
+        sdlcWindowTokenBudget: 5_000_000,
       }),
     )
     spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
@@ -1077,8 +1077,8 @@ describe('dispatchCiFixTask', () => {
     )
   })
 
-  it('forwards undefined projectBudgetOverride when sdlc_window_token_budget is absent (gh-129 AC1 negative, CI-fix path)', async () => {
-    // default readFileMock: { repoPath, owner } — no sdlc_window_token_budget
+  it('forwards undefined projectBudgetOverride when sdlcWindowTokenBudget is absent (gh-129 AC1 negative, CI-fix path)', async () => {
+    // default readFileMock: { repoPath, owner } — no sdlcWindowTokenBudget
     spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
 
     await dispatchCiFixTask(CI_ARGS)
