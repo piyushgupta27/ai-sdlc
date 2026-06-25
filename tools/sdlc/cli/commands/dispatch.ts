@@ -833,7 +833,7 @@ export async function dispatchCiFixTask(args: {
   const gate = await budgetGate(new Date(), undefined)
   if (gate.action === 'pause') return null
 
-  const pacing = await pacingGate(new Date(), args.taskTier, undefined)
+  const pacing = await pacingGate(new Date(), args.taskTier, undefined, cfg.sdlcWindowTokenBudget)
   if (pacing.action === 'pause') return null
 
   const taskId = `ci-fix-${args.prNumber}`
