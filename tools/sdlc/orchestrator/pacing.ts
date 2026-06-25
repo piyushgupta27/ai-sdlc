@@ -69,9 +69,20 @@ import { listProjects, projectDir } from './state.js'
  * usable token allowance in one 5h window — there is no API that returns the real
  * Max-plan quota, so this is a placeholder to be tuned: if dispatch hits the rate
  * limit before the brake pauses, LOWER this (the design's "revise the cap if we
- * hit the rate limit earlier than estimated"). Override: `SDLC_WINDOW_TOKEN_BUDGET`.
+ * hit the rate limit earlier than estimated"). Override: `SDLC_WINDOW_TOKEN_BUDGET`
+ * or per-project `sdlc_window_token_budget` in config.json.
+ *
+ * Raised from 20M to 30M to better serve solo AI testbed projects that run
+ * denser per-session token usage than the original team-sized calibration.
  */
-export const DEFAULT_WINDOW_TOKEN_BUDGET = 20_000_000
+export const DEFAULT_WINDOW_TOKEN_BUDGET = 30_000_000
+
+/**
+ * Warning threshold: fraction of the effective cap (capTokens) at which dispatch
+ * emits an approaching-limit warning. Fires before the hard pause so operators
+ * can act (raise the budget or defer lower-priority tasks) before dispatch stops.
+ */
+export const WARN_CAP_FRACTION = 0.7
 
 /** The owner's active window cap (fraction of the budget). 60–80% per design; mid. */
 export const DEFAULT_ACTIVE_CAP_FRACTION = 0.7
@@ -176,6 +187,8 @@ export interface PacingDecision {
   /** Projected window fill after this task (0..1+ of the full budget). */
   readonly projectedPct: number
   readonly inActiveWindow: boolean
+  /** True when current spend has reached WARN_CAP_FRACTION of the cap — approaching limit. */
+  readonly warningSoon: boolean
 }
 
 /**
@@ -195,6 +208,8 @@ export function checkPacing(
   const projected = windowSpentTokens + estimatedTaskTokens
   const projectedPct = windowBudgetTokens > 0 ? projected / windowBudgetTokens : 0
   const action = windowBudgetTokens > 0 && projected > capTokens ? 'pause' : 'allow'
+  const warningSoon =
+    windowBudgetTokens > 0 && capTokens > 0 && windowSpentTokens >= WARN_CAP_FRACTION * capTokens
   return {
     action,
     windowSpentTokens,
@@ -202,6 +217,7 @@ export function checkPacing(
     capTokens,
     projectedPct,
     inActiveWindow: isActiveWindow,
+    warningSoon,
   }
 }
 
@@ -397,13 +413,20 @@ async function allRepoPaths(): Promise<Result<string[], AppError>> {
  * task would overrun the time-aware cap. Fires an ntfy push on pause when a topic
  * is configured. Fail-OPEN: an aggregation error allows dispatch (a transient FS
  * issue must not wedge the pipeline) — the error is surfaced on stderr.
+ *
+ * @param projectBudgetOverride - Per-project budget from config.json
+ *   (`sdlc_window_token_budget`). Takes precedence over env / global default when set.
  */
 export async function pacingGate(
   now: Date,
   tier: Tier,
   webhookTopic: string | undefined,
+  projectBudgetOverride?: number,
 ): Promise<PacingDecision> {
-  const budget = windowTokenBudget()
+  const budget =
+    projectBudgetOverride !== undefined && projectBudgetOverride > 0
+      ? projectBudgetOverride
+      : windowTokenBudget()
   const estimate = estimateTaskTokens(tier)
   const fraction = capFractionNow(now)
   const active = inActiveWindow(now)

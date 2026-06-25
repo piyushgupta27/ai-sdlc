@@ -10,6 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AuditRow } from '../types/index.js'
 import { asProjectSlug, err, makeError } from '../types/index.js'
 
 // vi.mock calls are hoisted before imports — declare before any module that
@@ -32,6 +33,39 @@ import { listProjects, projectDir } from './state.js'
 const NOW = new Date('2026-06-13T12:00:00Z')
 
 const SLUG = asProjectSlug('test-proj')
+
+/** Temp dirs created during tests — cleaned up in afterEach. */
+const tmpDirs: string[] = []
+
+afterEach(async () => {
+  for (const d of tmpDirs) await rm(d, { recursive: true, force: true })
+  tmpDirs.length = 0
+})
+
+/**
+ * Seed a project+repo with audit rows and wire up listProjects/projectDir mocks.
+ * Returns the repo path (for additional assertions if needed).
+ */
+async function seedTokenRepo(
+  rows: Array<{ ts: string; tokens: AuditRow['tokens'] }>,
+): Promise<string> {
+  const projDir = await mkdtemp(join(tmpdir(), 'sdlc-pacing-glue-proj-'))
+  const repoDir = await mkdtemp(join(tmpdir(), 'sdlc-pacing-glue-repo-'))
+  tmpDirs.push(projDir, repoDir)
+
+  await writeFile(join(projDir, 'config.json'), JSON.stringify({ repoPath: repoDir }))
+
+  const auditDir = join(repoDir, '.audit', '2026-06-13')
+  await mkdir(auditDir, { recursive: true })
+  await writeFile(
+    join(auditDir, 'audit.jsonl'),
+    `${rows.map((r) => JSON.stringify({ ...r, taskId: 'gh-1', outcome: 'success' })).join('\n')}\n`,
+  )
+
+  vi.mocked(listProjects).mockResolvedValueOnce({ ok: true, value: [SLUG] })
+  vi.mocked(projectDir).mockReturnValue(projDir)
+  return repoDir
+}
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -78,6 +112,38 @@ describe('pacingGate', () => {
     expect(d.action).toBe('pause')
     expect(vi.mocked(notify)).toHaveBeenCalledOnce()
     expect(vi.mocked(notify).mock.calls[0][0]).toEqual({ topic: 'test-topic' })
+  })
+
+  it('projectBudgetOverride takes precedence over env when set and positive', async () => {
+    // env says 1 (would pause), but per-project override is 60M → should allow
+    process.env.SDLC_WINDOW_TOKEN_BUDGET = '1'
+    vi.mocked(listProjects).mockResolvedValueOnce({ ok: true, value: [] })
+    const d = await pacingGate(NOW, 4, undefined, 60_000_000)
+    expect(d.action).toBe('allow')
+  })
+
+  it('projectBudgetOverride 0 or negative falls through to env/default', async () => {
+    // override=0 is treated as unset → falls back to env=1 → pause
+    process.env.SDLC_WINDOW_TOKEN_BUDGET = '1'
+    vi.mocked(listProjects).mockResolvedValueOnce({ ok: true, value: [] })
+    const d = await pacingGate(NOW, 4, undefined, 0)
+    expect(d.action).toBe('pause')
+  })
+
+  it('sets warningSoon when window spend has reached 70% of the effective cap', async () => {
+    // off-window cap 0.92; per-project budget = 1_000_000
+    // capTokens = 920_000; warn threshold = 0.7 * 920_000 = 644_000
+    // seed 700_000 tok in-window spend → warningSoon = true, action = allow
+    // (tier-4 est 300k; projected = 700k + 300k = 1M > 920k → actually pause)
+    // Use budget large enough that projected stays under cap:
+    // budget = 10_000_000; cap = 9_200_000; warn@64% = 6_440_000
+    // spend 7_000_000 → warningSoon=true; projected = 7_000_000+300_000=7_300_000 < 9_200_000 → allow
+    await seedTokenRepo([
+      { ts: '2026-06-13T10:00:00Z', tokens: { promptInput: 7_000_000, promptOutput: 0 } },
+    ])
+    const d = await pacingGate(NOW, 4, undefined, 10_000_000)
+    expect(d.action).toBe('allow')
+    expect(d.warningSoon).toBe(true)
   })
 })
 
