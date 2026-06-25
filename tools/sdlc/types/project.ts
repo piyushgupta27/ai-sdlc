@@ -50,6 +50,8 @@ export interface ProjectConfig {
     readonly lint?: string
     readonly test?: string
   }
+  /** Per-project rolling 5h window token budget override. Supersedes SDLC_WINDOW_TOKEN_BUDGET env var. */
+  readonly sdlcWindowTokenBudget?: number
 }
 
 /**

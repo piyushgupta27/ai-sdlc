@@ -157,7 +157,7 @@ function runCmd(
 async function fetchCheckRuns(owner: string, repo: string, sha: string): Promise<CheckRun[]> {
   const result = await runCmd(
     'gh',
-    ['api', `repos/${owner}/${repo}/commits/${sha}/check-runs`, '-F', 'per_page=100'],
+    ['api', `repos/${owner}/${repo}/commits/${sha}/check-runs`],
     tmpdir(),
   )
   if (result.code !== 0) return []

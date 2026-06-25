@@ -8,6 +8,7 @@ import {
   DEFAULT_OFF_CAP_FRACTION,
   DEFAULT_TIER_TOKEN_ESTIMATE,
   DEFAULT_WINDOW_TOKEN_BUDGET,
+  WARN_CAP_FRACTION,
   activeCapFraction,
   capFractionNow,
   checkPacing,
@@ -41,6 +42,12 @@ afterEach(() => {
 // ─── config getters ──────────────────────────────────────────────────────────
 
 describe('config getters', () => {
+  it('default is 30M (raised from 20M for solo testbed use)', () => {
+    process.env.SDLC_WINDOW_TOKEN_BUDGET = ''
+    expect(windowTokenBudget()).toBe(30_000_000)
+    expect(DEFAULT_WINDOW_TOKEN_BUDGET).toBe(30_000_000)
+  })
+
   it('default + override + invalid for the window budget', () => {
     process.env.SDLC_WINDOW_TOKEN_BUDGET = ''
     expect(windowTokenBudget()).toBe(DEFAULT_WINDOW_TOKEN_BUDGET)
@@ -128,6 +135,34 @@ describe('checkPacing', () => {
 
   it('never pauses with a non-positive budget (unset/unlimited)', () => {
     expect(checkPacing(9_999, 9_999, 0, 0.7, true).action).toBe('allow')
+  })
+
+  // ─── warningSoon ──────────────────────────────────────────────────────────
+
+  it('sets warningSoon when spend reaches WARN_CAP_FRACTION of the effective cap', () => {
+    // capTokens = 100 * 0.7 = 70; warn threshold = WARN_CAP_FRACTION * 70 = 49
+    // spent 49 → exactly at warn threshold → warningSoon
+    const d = checkPacing(49, 1, 100, 0.7, true)
+    expect(d.action).toBe('allow') // not yet pausing
+    expect(d.warningSoon).toBe(true)
+    expect(WARN_CAP_FRACTION).toBe(0.7)
+  })
+
+  it('does not set warningSoon when spend is below the warn threshold', () => {
+    // capTokens = 70; warn threshold = 49; spent 40 < 49 → no warning
+    const d = checkPacing(40, 5, 100, 0.7, true)
+    expect(d.warningSoon).toBe(false)
+  })
+
+  it('sets warningSoon even when action is pause (already past cap)', () => {
+    // spent 60, est 20 → pause; spent 60 >= 49 → also warningSoon
+    const d = checkPacing(60, 20, 100, 0.7, true)
+    expect(d.action).toBe('pause')
+    expect(d.warningSoon).toBe(true)
+  })
+
+  it('never sets warningSoon with a non-positive budget', () => {
+    expect(checkPacing(9_999, 9_999, 0, 0.7, true).warningSoon).toBe(false)
   })
 })
 

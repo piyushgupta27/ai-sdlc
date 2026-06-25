@@ -16,10 +16,11 @@ import { asProjectSlug, ok } from '../../types/index.js'
 
 // ─── hoist mock refs so they're available in the vi.mock() factories ─────────
 
-const { spawnMock, readFileMock, existsSyncMock } = vi.hoisted(() => ({
+const { spawnMock, readFileMock, existsSyncMock, pacingGateMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   readFileMock: vi.fn(),
   existsSyncMock: vi.fn(),
+  pacingGateMock: vi.fn(),
 }))
 
 // ─── module mocks (evaluated before any import) ───────────────────────────────
@@ -54,6 +55,10 @@ vi.mock('../../sandbox/index.js', () => ({
   provisionWorktreeSandbox: vi.fn(),
   detectLockfileDrift: vi.fn(),
 }))
+vi.mock('../../orchestrator/pacing.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../orchestrator/pacing.js')>()),
+  pacingGate: pacingGateMock,
+}))
 vi.mock('../../integrations/ntfy.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
@@ -71,7 +76,7 @@ import { runTask } from '../../orchestrator/index.js'
 import { listProjects, projectDir, readState } from '../../orchestrator/state.js'
 import { hasDeterministicFailure, runValidations } from '../../orchestrator/validations.js'
 import { detectLockfileDrift, provisionWorktreeSandbox } from '../../sandbox/index.js'
-import { buildPrBody, runDispatch } from './dispatch.js'
+import { buildPrBody, dispatchCiFixTask, runDispatch } from './dispatch.js'
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -151,6 +156,16 @@ beforeEach(() => {
   vi.mocked(moveItem).mockResolvedValue(ok(undefined))
 
   vi.mocked(budgetGate).mockResolvedValue({ action: 'allow', spentUsd: 0, budgetUsd: 100, pct: 0 })
+
+  pacingGateMock.mockResolvedValue({
+    action: 'allow' as const,
+    windowSpentTokens: 0,
+    estimatedTaskTokens: 300_000,
+    capTokens: 27_600_000,
+    projectedPct: 0.01,
+    inActiveWindow: false,
+    warningSoon: false,
+  })
 
   vi.mocked(provisionWorktreeSandbox).mockResolvedValue(
     ok({
@@ -901,6 +916,89 @@ describe('dispatchFromBoard — type label applied from [keyword] in task title 
   })
 })
 
+// ─── Suite 9 (gh-129): per-project budget override + approaching-cap warning ──
+
+describe('dispatchFromBoard — pacing: sdlcWindowTokenBudget + warningSoon (gh-129)', () => {
+  beforeEach(() => {
+    vi.mocked(listItems)
+      .mockResolvedValueOnce(ok([fakeItem]))
+      .mockResolvedValue(ok([]))
+  })
+
+  it('passes sdlcWindowTokenBudget from config.json to pacingGate as projectBudgetOverride (AC1)', async () => {
+    readFileMock.mockResolvedValue(
+      JSON.stringify({
+        repoPath: '/fake/repo',
+        owner: 'fakeowner',
+        sdlcWindowTokenBudget: 5_000_000,
+      }),
+    )
+    await runDispatch(ARGV)
+    expect(pacingGateMock).toHaveBeenCalledWith(
+      expect.any(Date),
+      2, // fakeItem has labels: ['tier:2']
+      undefined, // no webhookTopic
+      5_000_000,
+    )
+  })
+
+  it('passes undefined projectBudgetOverride when sdlcWindowTokenBudget is absent (AC1 negative)', async () => {
+    // default readFileMock: { repoPath, owner } — no sdlcWindowTokenBudget
+    await runDispatch(ARGV)
+    expect(pacingGateMock).toHaveBeenCalledWith(expect.any(Date), 2, undefined, undefined)
+  })
+
+  it('writes ⚠️ warning to stderr when warningSoon is true (AC2)', async () => {
+    pacingGateMock.mockResolvedValue({
+      action: 'allow',
+      windowSpentTokens: 7_000_000,
+      estimatedTaskTokens: 300_000,
+      capTokens: 9_200_000,
+      projectedPct: 0.79,
+      inActiveWindow: false,
+      warningSoon: true,
+    })
+    const stderrLines: string[] = []
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((msg) => {
+      stderrLines.push(String(msg))
+      return true
+    })
+    try {
+      await runDispatch(ARGV)
+    } finally {
+      stderrSpy.mockRestore()
+    }
+    const combined = stderrLines.join('')
+    expect(combined).toContain('⚠️')
+    expect(combined).toContain('config.json')
+  })
+
+  it('pacing pause message written to stdout includes config.json override hint (AC5)', async () => {
+    pacingGateMock.mockResolvedValue({
+      action: 'pause',
+      windowSpentTokens: 9_000_000,
+      estimatedTaskTokens: 300_000,
+      capTokens: 9_200_000,
+      projectedPct: 1.01,
+      inActiveWindow: false,
+      warningSoon: false,
+    })
+    const stdoutLines: string[] = []
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((msg) => {
+      stdoutLines.push(String(msg))
+      return true
+    })
+    let code = -1
+    try {
+      code = await runDispatch(ARGV)
+    } finally {
+      stdoutSpy.mockRestore()
+    }
+    expect(code).toBe(0)
+    expect(stdoutLines.join('')).toContain('config.json')
+  })
+})
+
 // ─── Suite 8 (gh-159 AC5): PR URL extraction guard ───────────────────────────
 
 describe('dispatchFromBoard — PR URL extraction guard (gh-159 AC5)', () => {
@@ -929,5 +1027,87 @@ describe('dispatchFromBoard — PR URL extraction guard (gh-159 AC5)', () => {
       (c) => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('api'),
     )
     expect(apiCalls).toHaveLength(0)
+  })
+})
+
+// ─── Suite 10: dispatchCiFixTask (gh-180 coverage) ───────────────────────────
+
+describe('dispatchCiFixTask', () => {
+  const CI_ARGS = {
+    slug: asProjectSlug(SLUG),
+    branch: 'feature/gh-1',
+    prNumber: 1,
+    taskTier: 2 as const,
+    failures: [{ name: 'CI / test', conclusion: 'failure', summary: 'tests failed' }],
+  }
+
+  it('returns the new HEAD SHA on success (happy path)', async () => {
+    // git rev-parse HEAD returns a sha; git push succeeds
+    spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
+
+    const sha = await dispatchCiFixTask(CI_ARGS)
+
+    expect(sha).toBe('deadbeef1234')
+    expect(vi.mocked(provisionWorktreeSandbox)).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: 'feature/gh-1', existingBranch: true }),
+    )
+    expect(vi.mocked(runTask)).toHaveBeenCalled()
+  })
+
+  it('forwards cfg.sdlcWindowTokenBudget to pacingGate as projectBudgetOverride (gh-129 AC1, CI-fix path)', async () => {
+    // Regression guard for e313aa6: the CI-fix re-dispatch path must honor the
+    // per-project cap override, not just dispatchFromBoard/dispatchManualSpec.
+    // Reverting dispatch.ts:836's 4th arg to `undefined` must fail this test.
+    readFileMock.mockResolvedValue(
+      JSON.stringify({
+        repoPath: '/fake/repo',
+        owner: 'fakeowner',
+        sdlcWindowTokenBudget: 5_000_000,
+      }),
+    )
+    spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
+
+    await dispatchCiFixTask(CI_ARGS)
+
+    expect(pacingGateMock).toHaveBeenCalledWith(
+      expect.any(Date),
+      2, // CI_ARGS.taskTier
+      undefined, // no webhookTopic on the CI-fix path
+      5_000_000,
+    )
+  })
+
+  it('forwards undefined projectBudgetOverride when sdlcWindowTokenBudget is absent (gh-129 AC1 negative, CI-fix path)', async () => {
+    // default readFileMock: { repoPath, owner } — no sdlcWindowTokenBudget
+    spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
+
+    await dispatchCiFixTask(CI_ARGS)
+
+    expect(pacingGateMock).toHaveBeenCalledWith(expect.any(Date), 2, undefined, undefined)
+  })
+
+  it('returns null when budget gate pauses', async () => {
+    vi.mocked(budgetGate).mockResolvedValue({
+      action: 'pause',
+      spentUsd: 90,
+      budgetUsd: 100,
+      pct: 0.9,
+    })
+
+    expect(await dispatchCiFixTask(CI_ARGS)).toBeNull()
+  })
+
+  it('returns null when pacing gate pauses', async () => {
+    pacingGateMock.mockResolvedValue({
+      action: 'pause',
+      windowSpentTokens: 9_000_000,
+      estimatedTaskTokens: 300_000,
+      capTokens: 9_200_000,
+      projectedPct: 1.01,
+      inActiveWindow: false,
+      warningSoon: false,
+    })
+
+    expect(await dispatchCiFixTask(CI_ARGS)).toBeNull()
   })
 })

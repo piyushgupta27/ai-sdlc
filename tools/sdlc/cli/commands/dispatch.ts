@@ -84,7 +84,14 @@ function formatBudgetPause(gate: BudgetDecision, processed?: number): string {
 function formatPacingPause(gate: PacingDecision, processed?: number): string {
   const window = gate.inActiveWindow ? 'active' : 'off'
   const tail = processed === undefined ? '' : ` Processed ${processed} task(s).`
-  return `\n⏸  Pacing guard: ~${gate.windowSpentTokens.toLocaleString()} tok spent + ~${gate.estimatedTaskTokens.toLocaleString()} est for next task would exceed the ${window}-window cap (~${Math.round(gate.capTokens).toLocaleString()} tok / ${WINDOW_HOURS}h).${tail} Raise SDLC_WINDOW_TOKEN_BUDGET / SDLC_PACING_CAP_* to override.\n`
+  return `\n⏸  Pacing guard: ~${gate.windowSpentTokens.toLocaleString()} tok spent + ~${gate.estimatedTaskTokens.toLocaleString()} est for next task would exceed the ${window}-window cap (~${Math.round(gate.capTokens).toLocaleString()} tok / ${WINDOW_HOURS}h).${tail} Raise SDLC_WINDOW_TOKEN_BUDGET / SDLC_PACING_CAP_* to override, or set sdlcWindowTokenBudget in the project's config.json.\n`
+}
+
+/** Format the approaching-cap warning (fired at 70% of the effective cap, before pause). */
+function formatPacingWarning(gate: PacingDecision): string {
+  const windowLabel = gate.inActiveWindow ? 'active' : 'off'
+  const pct = gate.capTokens > 0 ? Math.round((gate.windowSpentTokens / gate.capTokens) * 100) : 0
+  return `\n⚠️  Pacing warning: ~${gate.windowSpentTokens.toLocaleString()} tok spent (${pct}% of ${windowLabel}-window cap ~${Math.round(gate.capTokens).toLocaleString()} tok). Approaching the dispatch limit — next task may trigger a pause. Raise SDLC_WINDOW_TOKEN_BUDGET or set sdlcWindowTokenBudget in config.json to prevent this.\n`
 }
 
 /** Format the rework/revert-rate trip notice (gh-87). */
@@ -177,10 +184,13 @@ async function dispatchManualSpec(slug: ProjectSlug, taskSpecPath: string): Prom
     process.stderr.write(formatBudgetPause(gate))
     return 0
   }
-  const pacing = await pacingGate(new Date(), task.tier, webhookTopic)
+  const pacing = await pacingGate(new Date(), task.tier, webhookTopic, cfg.sdlcWindowTokenBudget)
   if (pacing.action === 'pause') {
     process.stderr.write(formatPacingPause(pacing))
     return 0
+  }
+  if (pacing.warningSoon) {
+    process.stderr.write(formatPacingWarning(pacing))
   }
 
   const branch = `feature/${task.id}`
@@ -276,10 +286,13 @@ async function dispatchFromBoard(
     // Usage-window pacing (gh-87): would STARTING this task overrun the time-aware
     // 5h-window cap? Pause before starting → never rate-limited mid-task. The card
     // stays in Ready for the next window.
-    const pacing = await pacingGate(new Date(), task.tier, webhookTopic)
+    const pacing = await pacingGate(new Date(), task.tier, webhookTopic, cfg.sdlcWindowTokenBudget)
     if (pacing.action === 'pause') {
       process.stdout.write(formatPacingPause(pacing, processed))
       return 0
+    }
+    if (pacing.warningSoon) {
+      process.stderr.write(formatPacingWarning(pacing))
     }
 
     // Move to Building
@@ -425,6 +438,8 @@ interface MinimalConfig {
   readonly repoPath: string
   readonly owner: string
   readonly validationCommands?: ValidationCommands
+  /** Per-project window token budget override (sdlcWindowTokenBudget in config.json). */
+  readonly sdlcWindowTokenBudget?: number
 }
 
 async function readConfig(slug: ProjectSlug): Promise<MinimalConfig | null> {
@@ -435,12 +450,16 @@ async function readConfig(slug: ProjectSlug): Promise<MinimalConfig | null> {
     repoPath?: string
     owner?: string
     validationCommands?: ValidationCommands
+    sdlcWindowTokenBudget?: number
   }
   if (!cfg.repoPath || !cfg.owner) return null
   return {
     repoPath: cfg.repoPath,
     owner: cfg.owner,
     ...(cfg.validationCommands ? { validationCommands: cfg.validationCommands } : {}),
+    ...(typeof cfg.sdlcWindowTokenBudget === 'number' && cfg.sdlcWindowTokenBudget > 0
+      ? { sdlcWindowTokenBudget: cfg.sdlcWindowTokenBudget }
+      : {}),
   }
 }
 
@@ -814,7 +833,7 @@ export async function dispatchCiFixTask(args: {
   const gate = await budgetGate(new Date(), undefined)
   if (gate.action === 'pause') return null
 
-  const pacing = await pacingGate(new Date(), args.taskTier, undefined)
+  const pacing = await pacingGate(new Date(), args.taskTier, undefined, cfg.sdlcWindowTokenBudget)
   if (pacing.action === 'pause') return null
 
   const taskId = `ci-fix-${args.prNumber}`
