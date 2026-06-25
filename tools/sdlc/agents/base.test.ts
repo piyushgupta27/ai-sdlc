@@ -274,28 +274,20 @@ describe('#77 — one-shot re-prompt on agent.invalid-response', () => {
 describe('role-based tool scoping (G1)', () => {
   const PROSE_RESPONSE = 'The task looks good.'
 
-  it('reviewer dispatch gets Read,Glob,Grep only — no Write, Edit, or Bash', async () => {
+  it('reviewer dispatch gets Read,Glob,Grep only — exact grant, no Write/Edit/Bash', async () => {
     const captured: DispatchOpts[] = []
     const t = makeTransport((o) => captured.push(o))
     await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport: t })
-    const tools = captured[0]?.allowedTools ?? ''
-    expect(tools).toContain('Read')
-    expect(tools).toContain('Grep')
-    expect(tools).not.toContain('Write')
-    expect(tools).not.toContain('Edit')
-    expect(tools).not.toContain('Bash')
+    expect(captured[0]?.allowedTools).toBe('Read,Glob,Grep')
   })
 
-  it('checker dispatch gets git-inspect Bash but not Write or Edit', async () => {
+  it('checker dispatch gets git-inspect-only Bash — exact grant, no Write or Edit', async () => {
     const captured: DispatchOpts[] = []
     const t = makeTransport((o) => captured.push(o))
     await runAgent({ role: 'checker', brief: BASE_BRIEF, tier: 2, transport: t })
-    const tools = captured[0]?.allowedTools ?? ''
-    expect(tools).toContain('Read')
-    expect(tools).toContain('Bash(git show:*)')
-    expect(tools).toContain('Bash(git diff:*)')
-    expect(tools).not.toContain('Write')
-    expect(tools).not.toContain('Edit')
+    expect(captured[0]?.allowedTools).toBe(
+      'Read,Glob,Grep,Bash(git show:*),Bash(git diff:*),Bash(git log:*)',
+    )
   })
 
   it('builder dispatch passes no allowedTools override — transport defaults apply', async () => {
@@ -322,9 +314,7 @@ describe('role-based tool scoping (G1)', () => {
     await runAgent({ role: 'reviewer', brief: BASE_BRIEF, tier: 2, transport })
     expect(callCount).toBe(2)
     for (const d of captured) {
-      expect(d.allowedTools).not.toContain('Write')
-      expect(d.allowedTools).not.toContain('Edit')
-      expect(d.allowedTools).not.toContain('Bash')
+      expect(d.allowedTools).toBe('Read,Glob,Grep')
     }
   })
 })
