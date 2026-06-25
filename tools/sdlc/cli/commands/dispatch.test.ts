@@ -1054,6 +1054,38 @@ describe('dispatchCiFixTask', () => {
     expect(vi.mocked(runTask)).toHaveBeenCalled()
   })
 
+  it('forwards cfg.sdlcWindowTokenBudget to pacingGate as projectBudgetOverride (gh-129 AC1, CI-fix path)', async () => {
+    // Regression guard for e313aa6: the CI-fix re-dispatch path must honor the
+    // per-project cap override, not just dispatchFromBoard/dispatchManualSpec.
+    // Reverting dispatch.ts:836's 4th arg to `undefined` must fail this test.
+    readFileMock.mockResolvedValue(
+      JSON.stringify({
+        repoPath: '/fake/repo',
+        owner: 'fakeowner',
+        sdlc_window_token_budget: 5_000_000,
+      }),
+    )
+    spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
+
+    await dispatchCiFixTask(CI_ARGS)
+
+    expect(pacingGateMock).toHaveBeenCalledWith(
+      expect.any(Date),
+      2, // CI_ARGS.taskTier
+      undefined, // no webhookTopic on the CI-fix path
+      5_000_000,
+    )
+  })
+
+  it('forwards undefined projectBudgetOverride when sdlc_window_token_budget is absent (gh-129 AC1 negative, CI-fix path)', async () => {
+    // default readFileMock: { repoPath, owner } — no sdlc_window_token_budget
+    spawnMock.mockImplementation(() => makeChildProcess(0, 'deadbeef1234\n'))
+
+    await dispatchCiFixTask(CI_ARGS)
+
+    expect(pacingGateMock).toHaveBeenCalledWith(expect.any(Date), 2, undefined, undefined)
+  })
+
   it('returns null when budget gate pauses', async () => {
     vi.mocked(budgetGate).mockResolvedValue({
       action: 'pause',
