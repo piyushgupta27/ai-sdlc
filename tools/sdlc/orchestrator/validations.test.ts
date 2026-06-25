@@ -6,8 +6,9 @@
  */
 
 import { existsSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { asWorktreeCommands, hasDeterministicFailure, runValidations } from './validations.js'
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -122,5 +123,46 @@ describe('asWorktreeCommands', () => {
       expect(result).not.toBe(cmds)
       expect(cmds.test).toBe('pnpm run test')
     })
+  })
+})
+
+describe('runValidations — secret scan (gitleaks)', () => {
+  const fakeBinDir = '/tmp/ai-sdlc-test-gitleaks'
+  const fakeGitleaks = join(fakeBinDir, 'gitleaks')
+  let savedPath: string | undefined
+
+  beforeEach(async () => {
+    await mkdir(fakeBinDir, { recursive: true })
+    savedPath = process.env.PATH
+    process.env.PATH = `${fakeBinDir}:${process.env.PATH ?? ''}`
+  })
+
+  afterEach(() => {
+    process.env.PATH = savedPath
+  })
+
+  it('populates secrets=pass when gitleaks exits 0 (no leaks)', async () => {
+    await writeFile(fakeGitleaks, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    const result = await runValidations(process.cwd(), {})
+    expect(result.validations.secrets).toBe('pass')
+    const detail = result.details.find((d) => d.check === 'secrets')
+    expect(detail?.result).toBe('pass')
+    expect(detail?.command).toContain('gitleaks detect')
+  })
+
+  it('populates secrets=fail when gitleaks exits 1 (leak found), hasDeterministicFailure=true', async () => {
+    await writeFile(fakeGitleaks, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    const result = await runValidations(process.cwd(), {})
+    expect(result.validations.secrets).toBe('fail')
+    expect(hasDeterministicFailure(result.validations)).toBe(true)
+    expect(result.details.find((d) => d.check === 'secrets')?.result).toBe('fail')
+  })
+
+  it('omits secrets field when gitleaks is not in PATH', async () => {
+    process.env.PATH = savedPath // restore to env without fake bin
+    const result = await runValidations(process.cwd(), {})
+    expect(result.validations.secrets).toBeUndefined()
+    expect(hasDeterministicFailure(result.validations)).toBe(false)
+    expect(result.details.find((d) => d.check === 'secrets')).toBeUndefined()
   })
 })
