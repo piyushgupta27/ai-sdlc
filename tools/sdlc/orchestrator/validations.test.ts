@@ -6,7 +6,8 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { asWorktreeCommands, hasDeterministicFailure, runValidations } from './validations.js'
@@ -127,18 +128,20 @@ describe('asWorktreeCommands', () => {
 })
 
 describe('runValidations — secret scan (gitleaks)', () => {
-  const fakeBinDir = '/tmp/ai-sdlc-test-gitleaks'
-  const fakeGitleaks = join(fakeBinDir, 'gitleaks')
+  let fakeBinDir: string
+  let fakeGitleaks: string
   let savedPath: string | undefined
 
   beforeEach(async () => {
-    await mkdir(fakeBinDir, { recursive: true })
+    fakeBinDir = await mkdtemp(join(tmpdir(), 'ai-sdlc-test-gitleaks-'))
+    fakeGitleaks = join(fakeBinDir, 'gitleaks')
     savedPath = process.env.PATH
     process.env.PATH = `${fakeBinDir}:${process.env.PATH ?? ''}`
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env.PATH = savedPath
+    await rm(fakeBinDir, { recursive: true, force: true })
   })
 
   it('populates secrets=pass when gitleaks exits 0 (no leaks)', async () => {
