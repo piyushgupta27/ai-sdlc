@@ -484,7 +484,7 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
 
   for (;;) {
     // (1) deterministic re-verify — H1 [D]
-    const { validations, details } = await runValidations(ctx.targetRepo, wtCommands)
+    const { validations, details, warnings } = await runValidations(ctx.targetRepo, wtCommands)
     const detFailed = hasDeterministicFailure(validations)
 
     // (2) CHECKER semantic audit — [C]
@@ -544,7 +544,7 @@ async function runCheckGate(ctx: CheckGateCtx): Promise<Result<TaskRunOutcome, A
         model: checkerResult.value.model,
         transport: checkerResult.value.transport,
         filesRead: checkerResult.value.filesRead,
-        notes: `CHECKER ${checkerOut.verdict} (conf ${checkerOut.confidence}) — ${decision.reason}; deterministic: ${summarizeValidations(validations)}`,
+        notes: `CHECKER ${checkerOut.verdict} (conf ${checkerOut.confidence}) — ${decision.reason}; deterministic: ${summarizeValidations(validations)}${warnings?.length ? `; skipped: ${warnings.join(', ')}` : ''}`,
       },
       ctx.tier,
       ctx.retriesUsed,

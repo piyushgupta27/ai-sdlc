@@ -27,7 +27,7 @@ export interface ValidationCommands {
 
 /** One check's outcome, for the audit log + the CHECKER payload. */
 export interface ValidationDetail {
-  readonly check: 'typecheck' | 'lint' | 'test'
+  readonly check: 'typecheck' | 'lint' | 'test' | 'secrets'
   readonly command: string
   readonly result: 'pass' | 'fail'
   readonly exitCode: number
@@ -36,6 +36,8 @@ export interface ValidationDetail {
 export interface ValidationRun {
   readonly validations: AuditValidations
   readonly details: readonly ValidationDetail[]
+  /** Scans that were skipped due to missing tooling — surfaced in audit notes. */
+  readonly warnings?: readonly string[]
 }
 
 interface CommandResult {
@@ -79,10 +81,38 @@ const CHECK_MAP = [
   { key: 'test', field: 'tests' },
 ] as const
 
+const SECRET_SCAN_COMMAND = 'gitleaks detect --source . --no-banner --exit-code 1'
+
+/**
+ * Run gitleaks against the target repo. Returns null (and emits a structured
+ * warning) when gitleaks is not in PATH — the secrets field is then omitted
+ * from the validation matrix rather than silently passing.
+ */
+async function runSecretScan(
+  targetRepo: string,
+): Promise<{ result: 'pass' | 'fail'; command: string; exitCode: number } | null> {
+  const which = await runShellCommand('which gitleaks', targetRepo, 5)
+  if (which.exitCode !== 0) {
+    process.stderr.write(
+      `${JSON.stringify({ level: 'warn', component: 'validations', message: 'secret scan skipped: gitleaks not in PATH — install gitleaks to enable' })}\n`,
+    )
+    return null
+  }
+  const r = await runShellCommand(SECRET_SCAN_COMMAND, targetRepo, 30)
+  return {
+    result: r.exitCode === 0 ? 'pass' : 'fail',
+    command: SECRET_SCAN_COMMAND,
+    exitCode: r.exitCode,
+  }
+}
+
 /**
  * Re-run the configured deterministic checks in the target repo. Each command's
  * exit code is the gate: 0 → `pass`, anything else → `fail`. Unconfigured checks
  * are omitted from the matrix (not `fail`). Never throws.
+ *
+ * Secret scanning (gitleaks) is a built-in platform check — always runs when
+ * gitleaks is available, regardless of per-project ValidationCommands config.
  */
 export async function runValidations(
   targetRepo: string,
@@ -92,6 +122,7 @@ export async function runValidations(
 
   const validations: { -readonly [K in keyof AuditValidations]?: AuditValidations[K] } = {}
   const details: ValidationDetail[] = []
+  const warnings: string[] = []
 
   for (const { key, field } of CHECK_MAP) {
     const command = commands[key]
@@ -102,7 +133,20 @@ export async function runValidations(
     details.push({ check: key, command, result, exitCode: r.exitCode })
   }
 
-  return { validations, details }
+  const secretScan = await runSecretScan(targetRepo)
+  if (secretScan !== null) {
+    validations.secrets = secretScan.result
+    details.push({
+      check: 'secrets',
+      command: secretScan.command,
+      result: secretScan.result,
+      exitCode: secretScan.exitCode,
+    })
+  } else {
+    warnings.push('secret scan skipped: gitleaks not in PATH — install gitleaks to enable')
+  }
+
+  return { validations, details, ...(warnings.length ? { warnings } : {}) }
 }
 
 /** True if any deterministic check in the matrix failed — the H1 hard gate. */
