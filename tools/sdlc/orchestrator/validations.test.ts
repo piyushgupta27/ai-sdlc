@@ -161,11 +161,14 @@ describe('runValidations — secret scan (gitleaks)', () => {
     expect(result.details.find((d) => d.check === 'secrets')?.result).toBe('fail')
   })
 
-  it('omits secrets field when gitleaks is not in PATH', async () => {
+  it('omits secrets field when gitleaks is not in PATH, surfaces warning instead', async () => {
     process.env.PATH = savedPath // restore to env without fake bin
     const result = await runValidations(process.cwd(), {})
     expect(result.validations.secrets).toBeUndefined()
     expect(hasDeterministicFailure(result.validations)).toBe(false)
     expect(result.details.find((d) => d.check === 'secrets')).toBeUndefined()
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('gitleaks not in PATH')]),
+    )
   })
 })

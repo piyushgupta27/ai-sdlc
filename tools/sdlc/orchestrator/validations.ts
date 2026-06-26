@@ -36,6 +36,8 @@ export interface ValidationDetail {
 export interface ValidationRun {
   readonly validations: AuditValidations
   readonly details: readonly ValidationDetail[]
+  /** Scans that were skipped due to missing tooling — surfaced in audit notes. */
+  readonly warnings?: readonly string[]
 }
 
 interface CommandResult {
@@ -120,6 +122,7 @@ export async function runValidations(
 
   const validations: { -readonly [K in keyof AuditValidations]?: AuditValidations[K] } = {}
   const details: ValidationDetail[] = []
+  const warnings: string[] = []
 
   for (const { key, field } of CHECK_MAP) {
     const command = commands[key]
@@ -139,9 +142,11 @@ export async function runValidations(
       result: secretScan.result,
       exitCode: secretScan.exitCode,
     })
+  } else {
+    warnings.push('secret scan skipped: gitleaks not in PATH — install gitleaks to enable')
   }
 
-  return { validations, details }
+  return { validations, details, ...(warnings.length ? { warnings } : {}) }
 }
 
 /** True if any deterministic check in the matrix failed — the H1 hard gate. */
